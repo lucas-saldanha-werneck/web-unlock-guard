@@ -7,6 +7,8 @@
 //   Pre  R2: deny --remote-debugging-port without --user-data-dir (recent Chrome ignores it).
 //   Pre  R3: deny headless browsers against a Cloudflare host.
 //   Pre  R4: deny the next try on the same host + method after N blocks (default 2): switch method.
+//   Pre  your own deny rules, from a rules file (rules_file option, else ~/.config/web-unlock-guard/rules.json).
+//   SessionStart: create that rules file from hooks/rules.default.json if it is missing (also done on first use).
 //   Every host in a compound command or batch is checked before it runs.
 //   Post   : detect a block signature in the tool output, count a strike per host + method,
 //            and remember hosts that served a Cloudflare challenge. A call that reaches several
@@ -21,7 +23,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
-const WEBISH = /agent-browser|opencli|yt-dlp|curl\s|wget\s|firecrawl|apify|jina\.ai|remote-debugging|connectOverCDP|playwright|puppeteer|selenium|patchright|camoufox|nodriver|scrapling|--headless|https?:\/\//i;
+const BASE_WEBISH = /agent-browser|opencli|yt-dlp|curl\s|wget\s|firecrawl|apify|jina\.ai|remote-debugging|connectOverCDP|playwright|puppeteer|selenium|patchright|camoufox|nodriver|scrapling|--headless|https?:\/\//i;
 const FORCE = /WEB_(UNLOCK|ACCESS)_FORCE=1/;
 const DAY = 24 * 3600 * 1000;
 
@@ -32,19 +34,132 @@ function setting(...names) {
 }
 const expand = p => (p ? p.replace(/^~(?=$|[\\/])/, HOME).replace(/\$HOME|\$\{HOME\}/g, HOME) : p);
 
-function config() {
-  const max = parseInt(setting('CLAUDE_PLUGIN_OPTION_MAX_STRIKES', 'WEB_UNLOCK_GUARD_MAX_STRIKES'), 10);
-  let skillDir = expand(setting('CLAUDE_PLUGIN_OPTION_SKILL_DIR', 'WEB_UNLOCK_GUARD_SKILL_DIR'));
-  if (!skillDir) {
-    const guess = path.join(HOME, '.claude', 'skills', 'web-unlock');
-    if (fs.existsSync(path.join(guess, 'SKILL.md'))) skillDir = guess;
+// Claude's config folders, most specific first: $CLAUDE_CONFIG_DIR, then ~/.claude.
+function claudeDirs() {
+  const dirs = [expand(setting('CLAUDE_CONFIG_DIR')), path.join(HOME, '.claude')].filter(Boolean).map(d => path.resolve(d));
+  return [...new Set(dirs)];
+}
+
+// "0.10.0" > "0.9.2"; anything that is not a version sorts first.
+function cmpVersion(a, b) {
+  const pa = String(a || '').split(/[.+-]/).map(n => parseInt(n, 10) || 0), pb = String(b || '').split(/[.+-]/).map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
+}
+const inside = (dir, root) => { const r = path.relative(path.resolve(root), path.resolve(dir)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
+
+// The companion web-unlock skill, when skill_dir is empty: a personal copy in <claude dir>/skills/web-unlock,
+// else the web-unlock plugin's skill folder from installed_plugins.json. Among plugin installs, one for the
+// current project (projectPath contains cwd) beats a user-scope one; installs for other projects are ignored;
+// within a rank the newest version wins.
+function findCompanion(cwd) {
+  const dirs = claudeDirs();
+  for (const d of dirs) {
+    const personal = path.join(d, 'skills', 'web-unlock');
+    if (fs.existsSync(path.join(personal, 'SKILL.md'))) return personal;
   }
+  const found = [];
+  for (const d of dirs) {
+    const installed = loadJSON(path.join(d, 'plugins', 'installed_plugins.json'));
+    const plugins = (installed && installed.plugins) || {};
+    for (const [id, entries] of Object.entries(plugins)) {
+      if (!id.startsWith('web-unlock@')) continue;
+      for (const e of [].concat(entries || [])) {
+        if (!e || !e.installPath) continue;
+        let rank;
+        if (e.projectPath) { if (!cwd || !inside(cwd, e.projectPath)) continue; rank = 2; }
+        else if (!e.scope || e.scope === 'user') rank = 1;
+        else continue;
+        const dir = path.join(e.installPath, 'skills', 'web-unlock');
+        if (fs.existsSync(path.join(dir, 'SKILL.md'))) found.push({ dir, rank, version: e.version, updated: e.lastUpdated || '' });
+      }
+    }
+  }
+  found.sort((a, b) => b.rank - a.rank || cmpVersion(b.version, a.version) || String(b.updated).localeCompare(String(a.updated)));
+  return found.length ? found[0].dir : '';
+}
+
+// Cheap part of the settings: paths only, read before anything else.
+function rulesPath() {
+  return expand(setting('CLAUDE_PLUGIN_OPTION_RULES_FILE', 'WEB_UNLOCK_GUARD_RULES')) || path.join(HOME, '.config', 'web-unlock-guard', 'rules.json');
+}
+
+// First run: create your rules file from hooks/rules.default.json (empty lists = same as no file) where the
+// guard reads it. Runs at SessionStart and whenever the file is missing. Never overwrites or changes anything
+// that exists (O_EXCL), and never throws: a folder that cannot be written is simply left alone. A relative
+// rules_file is not seeded: it would land in whatever project folder the session is in.
+function seedRules(file) {
+  let fd, written = false;
+  try {
+    if (!file || !path.isAbsolute(file) || fs.existsSync(file)) return;
+    const data = fs.readFileSync(path.join(HERE, 'rules.default.json'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fd = fs.openSync(file, 'wx');
+    for (let off = 0; off < data.length;) off += fs.writeSync(fd, data, off);
+    written = true;
+  } catch (_) { /* exists, or not writable: nothing to do */ } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+      // A failed write (disk full, ...) must not leave an empty or cut-off file that is then kept forever.
+      if (!written) try { fs.unlinkSync(file); } catch (_) {}
+    }
+  }
+}
+
+// The rest, resolved only for web commands (or when a rule message needs {skill_dir}).
+// Registry = an overlay, read the same way as the web-unlock skill (its lib/sites.py): the companion skill's
+// bundled sites.json first (skill_dir, else the companion found on its own), then your registry on top
+// (sites_file, else the web-unlock user folder's sites.json). Same host = your whole entry wins.
+function config(cwd) {
+  const max = parseInt(setting('CLAUDE_PLUGIN_OPTION_MAX_STRIKES', 'WEB_UNLOCK_GUARD_MAX_STRIKES'), 10);
+  const explicitSkill = expand(setting('CLAUDE_PLUGIN_OPTION_SKILL_DIR', 'WEB_UNLOCK_GUARD_SKILL_DIR'));
+  let skillDir = explicitSkill || findCompanion(cwd);
   if (skillDir && !fs.existsSync(skillDir)) skillDir = '';
+  const skillSites = skillDir && path.join(skillDir, 'sites.json');
+  const userSites = path.join(expand(setting('WEB_UNLOCK_HOME')) || path.join(HOME, '.config', 'web-unlock'), 'sites.json');
   let sitesFile = expand(setting('CLAUDE_PLUGIN_OPTION_SITES_FILE', 'WEB_UNLOCK_GUARD_SITES'));
-  if (!sitesFile && skillDir && fs.existsSync(path.join(skillDir, 'sites.json'))) sitesFile = path.join(skillDir, 'sites.json');
-  const dataDir = process.env.CLAUDE_PLUGIN_DATA || path.join(HOME, '.claude', 'state');
+  if (!sitesFile && fs.existsSync(userSites)) sitesFile = userSites;
+  const bundledSites = skillSites && fs.existsSync(skillSites) && skillSites !== sitesFile ? skillSites : '';
+  const dataDir = process.env.CLAUDE_PLUGIN_DATA || path.join(claudeDirs()[0], 'state');
   const stateFile = expand(setting('WEB_UNLOCK_GUARD_STATE')) || path.join(dataDir, 'web-unlock-guard.json');
-  return { maxStrikes: max > 0 ? max : 2, skillDir, sitesFile, stateFile };
+  return { maxStrikes: max > 0 ? max : 2, skillDir, sitesFile, bundledSites, stateFile };
+}
+
+// Your own rules file: { "webish": ["word", ...], "deny": [{ "name", "pattern", "flags", "unless", "tools", "message" }] }.
+// "webish" adds tool names that make a command count as web work: a literal word, or
+// { "word": "...", "layer": "http|fetch-render|..." } so its blocks count strikes under that method
+// (a plain word only lets the call through to the other checks; it has no method of its own).
+// Each deny rule blocks a PreToolUse call whose command matches "pattern" (a JavaScript regex) and not
+// "unless", tested on each command segment separately (split at ; && || | and new lines); "tools" (a regex on
+// the tool name) limits which tools it applies to. Segments whose program only reads or prints text (grep, git,
+// echo, sed, ... see TEXT_ONLY) are not checked, so searching for a pattern or a commit message that names
+// it is not denied. "{skill_dir}" in the message becomes the companion skill folder. A rule with a bad regex
+// is skipped; the others still apply.
+const LAYERS = new Set(['http', 'fetch-render', 'fetch-unlock', 'browser-automation', 'browser-cft', 'browser-stealth', 'browser-real', 'browser-cloud']);
+function loadRules(file) {
+  const raw = file && fs.existsSync(file) ? loadJSON(file) : null;
+  const rules = { webish: [], deny: [] };
+  if (!raw || typeof raw !== 'object') return rules;
+  const re = (src, flags) => { try { return src ? new RegExp(String(src), flags || '') : null; } catch (_) { return undefined; } };
+  for (const w of Array.isArray(raw.webish) ? raw.webish : []) {
+    const word = typeof w === 'string' ? w : (w && typeof w.word === 'string' ? w.word : '');
+    if (!word.trim()) continue;
+    const layer = (w && typeof w === 'object' && w.layer) || null;
+    if (layer !== null && !LAYERS.has(layer)) {
+      process.stderr.write(`web-unlock-guard: rules file ${file}: unknown layer "${layer}" for "${word}", entry ignored (use one of ${[...LAYERS].join(', ')})\n`);
+      continue;
+    }
+    // A whole word: "mcp" does not match inside "mcporter".
+    const src = '(?<![A-Za-z0-9_-])' + word.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_-])';
+    rules.webish.push({ src, re: new RegExp(src, 'i'), layer });
+  }
+  for (const d of Array.isArray(raw.deny) ? raw.deny : []) {
+    if (!d || typeof d !== 'object') continue;
+    const pattern = re(d.pattern, d.flags), unless = re(d.unless, d.flags), tools = re(d.tools, 'i');
+    if (!pattern || unless === undefined || tools === undefined) continue;
+    rules.deny.push({ name: String(d.name || 'custom rule'), pattern, unless, tools, message: String(d.message || 'denied by your rules file') });
+  }
+  return rules;
 }
 
 function onPath(bin) {
@@ -141,10 +256,15 @@ function updateState(file, fn) {
   let fd = null;
   while (fd === null) {
     try { fd = fs.openSync(lock, 'wx'); } catch (e) {
-      if (e.code !== 'EEXIST') break;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.unlinkSync(lock); continue; } } catch (_) { continue; }
+      // On Windows, creating the lock while another hook is deleting it fails with EPERM/EACCES/EBUSY
+      // instead of EEXIST: the lock is still taken, so wait for it like EEXIST.
+      if (e.code !== 'EEXIST' && !TRANSIENT.has(e.code)) break;
+      let removed = false;
+      if (e.code === 'EEXIST') {
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.unlinkSync(lock); removed = true; } } catch (_) { /* gone or busy: retry */ }
+      }
       if (Date.now() > until) break;
-      sleep(10 + Math.random() * 20);
+      if (!removed) sleep(10 + Math.random() * 20);
     }
   }
   try {
@@ -167,6 +287,21 @@ function targetHost(firstHost, s) {
   return firstHost(/^https?:/i.test(m[1]) ? m[1] : 'https://' + m[1]) || h;
 }
 
+// The hosts of one registry file: its "hosts" object (or the whole object, for a file without one), minus
+// "_" notes. Missing or unreadable = none. Same rule as the web-unlock skill's lib/sites.py.
+function hostsOf(file) {
+  const d = file ? loadJSON(file) : null;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return {};
+  const h = d.hosts && typeof d.hosts === 'object' && !Array.isArray(d.hosts) ? d.hosts : d;
+  return Object.fromEntries(Object.entries(h).filter(([k]) => !k.startsWith('_')));
+}
+
+// The merged registry: bundled hosts first, then yours on top (same key = your entry, whole). null if no file.
+function loadSites(cfg) {
+  if (!cfg.sitesFile && !cfg.bundledSites) return null;
+  return { hosts: { ...hostsOf(cfg.bundledSites), ...hostsOf(cfg.sitesFile) } };
+}
+
 // Registry lookup: { "hosts": { "example.com": { tags, route, how, alias_of } } }.
 // Matches the host, its parent domains, and "*.domain" keys.
 function siteInfo(sites, host) {
@@ -182,6 +317,17 @@ function siteInfo(sites, host) {
   return null;
 }
 
+// Programs that only read, search or print text: a deny rule never fires on their segments.
+const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'git', 'echo', 'printf', 'cat', 'less', 'more',
+  'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'sed', 'awk', 'jq', 'diff', 'ls', 'find', 'gh', 'man']);
+// The program a segment runs: the first word after VAR=value, env, sudo, command, exec, nohup, time.
+function program(seg) {
+  const words = String(seg).trim().replace(/^[({\s]+/, '').split(/\s+/);
+  let i = 0;
+  while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || /^(env|sudo|command|exec|nohup|time|-\S+)$/.test(words[i]))) i++;
+  return path.basename(words[i] || '').replace(/^["']|["']$/g, '');
+}
+
 const out = o => process.stdout.write(JSON.stringify(o));
 const deny = (ev, reason) => out({ hookSpecificOutput: { hookEventName: ev, permissionDecision: 'deny', permissionDecisionReason: reason } });
 const FORCE_HINT = 'To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.';
@@ -191,15 +337,38 @@ async function main(hook) {
   const tool = hook.tool_name || '';
   const cmd = cmdText(hook.tool_input);
   const isFetch = /WebFetch/.test(tool);
-  if (!WEBISH.test(cmd) && !isFetch) return;
+  if (ev === 'SessionStart') return seedRules(rulesPath());
   if (FORCE.test(cmd)) return;
 
-  const cfg = config();
+  // Your rules file is the only thing read before the web check; without one, non-web calls stop here.
+  const rulesFile = rulesPath();
+  seedRules(rulesFile);
+  const rules = loadRules(rulesFile);
+  if (!rules.deny.length && !rules.webish.length && !BASE_WEBISH.test(cmd) && !isFetch) return;
+  let cfg = null;
+  const getCfg = () => (cfg = cfg || config(hook.cwd));
+  // Your own deny rules run first and on any command, web or not, one segment at a time.
+  if (ev === 'PreToolUse' && cmd && rules.deny.length) {
+    const segs = isFetch ? [cmd] : segments(hook.tool_input, cmd);
+    for (const r of rules.deny) {
+      if (r.tools && !r.tools.test(tool)) continue;
+      const seg = segs.find(sg => !TEXT_ONLY.has(program(sg)) && r.pattern.test(sg) && !(r.unless && r.unless.test(sg)));
+      if (seg !== undefined) {
+        const msg = r.message.includes('{skill_dir}') ? r.message.replaceAll('{skill_dir}', getCfg().skillDir || '<web-unlock skill folder>') : r.message;
+        return deny(ev, `web-unlock-guard (${r.name}): ${msg} ${FORCE_HINT}`);
+      }
+    }
+  }
+  const WEBISH = rules.webish.length ? new RegExp(`${BASE_WEBISH.source}|${rules.webish.map(w => w.src).join('|')}`, 'i') : BASE_WEBISH;
+  // The method of a request: the detector's, else the layer of a matching "webish" word from your rules.
+  const layerOf = c => inferLayer(c) || (rules.webish.find(w => w.layer && w.re.test(c)) || {}).layer || null;
+  if (!WEBISH.test(cmd) && !isFetch) return;
+  getCfg();
   const { detect, inferLayer, NEXT_LAYER, firstHost } = await loadDetector(cfg);
-  const sites = cfg.sitesFile ? loadJSON(cfg.sitesFile) : null;
+  const sites = loadSites(cfg);
   // WebFetch is the http method whatever words its URL contains; through r.jina.ai it is fetch-render.
   const fetchLayer = s => (/r\.jina\.ai/i.test(s) ? 'fetch-render' : 'http');
-  const wholeLayer = isFetch ? fetchLayer(cmd) : inferLayer(cmd);
+  const wholeLayer = isFetch ? fetchLayer(cmd) : layerOf(cmd);
   const state = loadState(cfg.stateFile);
   const sid = hook.session_id || 'nosession';
   const sess = state[sid] || {};
@@ -208,7 +377,7 @@ async function main(hook) {
   for (const seg of isFetch ? [cmd] : segments(hook.tool_input, cmd)) {
     const h = targetHost(firstHost, seg);
     if (!h) continue;
-    const l = (isFetch ? wholeLayer : inferLayer(seg)) || wholeLayer;
+    const l = (isFetch ? wholeLayer : layerOf(seg)) || wholeLayer;
     if (!targets.some(t => t.host === h && t.layer === l)) targets.push({ host: h, layer: l });
   }
   const cmdHost = targets.length ? targets[0].host : null;

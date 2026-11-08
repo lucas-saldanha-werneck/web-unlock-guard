@@ -1,0 +1,22 @@
+{
+  "webish": [
+    {
+      "word": "mcporter",
+      "layer": "fetch-render"
+    },
+    "my-scraper-cli"
+  ],
+  "deny": [
+    {
+      "name": "no-json-new",
+      "pattern": "/json/new\\b",
+      "message": "Opening a tab with /json/new brings the automation Chrome to the front. Open it in the background: {skill_dir}/bin/chrome-real.sh start \"<url>\" or node {skill_dir}/bin/cdp.mjs \"<url>\"."
+    },
+    {
+      "name": "automation-chrome-stays-behind",
+      "pattern": "Google Chrome Beta\\\\?\"?\\s*(to\\s+)?activate|activate\\s+application\\s+\\\\?\"Google Chrome Beta|\\bopen\\s+(-[a-zA-Z]+\\s+)*-a\\s+\\\\?[\"\\']?(\\/Applications\\/)?Google Chrome Beta|\\bopen\\s+(-[a-zA-Z]+\\s+)*-b\\s+com\\.google\\.Chrome\\.beta",
+      "unless": "\\bopen\\b.*\\s-[a-zA-Z]*g[a-zA-Z]*(\\s|$)",
+      "message": "Do not bring the automation Chrome to the front by hand. To sign in once: {skill_dir}/bin/chrome-real.sh login \"<url>\"; to work: chrome-real.sh start \"<url>\" (stays behind)."
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "web-unlock-guard",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Stops Claude from retrying a blocked website the same way: after 2 blocks on one method it must switch, and it can't point headless or default automation browsers at Cloudflare sites.",
   "author": {
     "name": "Lucas Saldanha Werneck",
@@ -26,13 +26,19 @@
     "sites_file": {
       "type": "string",
       "title": "Sites registry (optional)",
-      "description": "JSON file with known hosts: tags such as cloudflare, and the route that worked. Empty = no registry (or the companion skill's sites.json, if found).",
+      "description": "JSON file with known hosts: tags such as cloudflare, and the route that worked. Laid over the companion skill's bundled sites.json (same host = yours wins). Empty = ~/.config/web-unlock/sites.json.",
       "default": ""
     },
     "skill_dir": {
       "type": "string",
       "title": "Companion skill folder (optional)",
-      "description": "Folder of your own web-access skill. If it has lib/detect.mjs, its detector is used; if it has sites.json, that is the registry. Empty = ~/.claude/skills/web-unlock if it exists.",
+      "description": "Folder of your own web-access skill. If it has lib/detect.mjs, its detector is used; if it has sites.json, that is the bundled registry under yours. Empty = ~/.claude/skills/web-unlock if it exists, else the installed web-unlock plugin's skill.",
+      "default": ""
+    },
+    "rules_file": {
+      "type": "string",
+      "title": "Your own rules file (optional)",
+      "description": "JSON file with extra deny rules (regex pattern + message) and extra tool names to watch. Empty = ~/.config/web-unlock-guard/rules.json, which the plugin creates on first run.",
       "default": ""
     }
   }

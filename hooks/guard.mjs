@@ -233,10 +233,15 @@ function updateState(file, fn) {
   let fd = null;
   while (fd === null) {
     try { fd = fs.openSync(lock, 'wx'); } catch (e) {
-      if (e.code !== 'EEXIST') break;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.unlinkSync(lock); continue; } } catch (_) { continue; }
+      // On Windows, creating the lock while another hook is deleting it fails with EPERM/EACCES/EBUSY
+      // instead of EEXIST: the lock is still taken, so wait for it like EEXIST.
+      if (e.code !== 'EEXIST' && !TRANSIENT.has(e.code)) break;
+      let removed = false;
+      if (e.code === 'EEXIST') {
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.unlinkSync(lock); removed = true; } } catch (_) { /* gone or busy: retry */ }
+      }
       if (Date.now() > until) break;
-      sleep(10 + Math.random() * 20);
+      if (!removed) sleep(10 + Math.random() * 20);
     }
   }
   try {

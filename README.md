@@ -48,7 +48,7 @@ or use the environment variables.
 | `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
 | `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty | JSON registry of known hosts (see below). |
 | `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty | Your own companion skill folder (see Optional extras). |
-| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. Session entries are dropped after 24 hours. |
+| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
 
 ### Sites registry
 
@@ -101,8 +101,18 @@ registry.
 
 A `PostToolUse` / `PostToolUseFailure` hook reads each web tool result for block signatures:
 Cloudflare, DataDome, PerimeterX, Kasada, Imperva, Akamai, captcha widgets, LinkedIn's authwall,
-HTTP 401/403/406/429/451/503, short error pages and near-empty JavaScript shells. Each block
-counts a strike per session, host and method. A clean result resets the count for that method.
+HTTP 401/403/406/429/451/503 (including the `curl: (22)` line that `curl -f` prints), short
+error pages and near-empty JavaScript shells. Each block counts a strike per session, host and
+method. A tool call that succeeds with a clean result resets the count for that method. A failure
+with no block signature, such as a DNS error or a timeout, leaves the count as it is.
+
+The host is the first URL in the command. Two cases differ:
+
+- Through the r.jina.ai reader (`r.jina.ai/https://site.example/`), strikes count against the
+  target site, so one blocked site doesn't use up the reader for every other site.
+- A browser command with no URL (`agent-browser snapshot`, `eval`, `click`) counts against the
+  host that the same session last opened with that method.
+
 A `PreToolUse` hook then applies four rules:
 
 | Rule | What it denies |
@@ -131,8 +141,8 @@ node tests/run.mjs
 ```
 
 This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
-rule, with an empty temporary `HOME`. It also checks fail-open behavior and the companion skill
-folder.
+rule or case, with an empty temporary `HOME`. It also checks fail-open behavior, the companion
+skill folder, expiry of old entries, and parallel hooks writing the strike file at once.
 
 ## Uninstall
 

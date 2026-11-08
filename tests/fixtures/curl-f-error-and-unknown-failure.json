@@ -1,0 +1,17 @@
+{
+  "description": "curl -f reports a 403 as an error line, which counts as a strike; a failure with no block signature (DNS error) does not reset the count",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-curlf", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://shop.example.net/" },
+        "tool_response": { "stdout": "HTTP/2 403", "stderr": "" } },
+      "expect": "context", "contains": "strike 1/2" },
+    { "event": { "hook_event_name": "PostToolUseFailure", "session_id": "s-curlf", "tool_name": "Bash",
+        "tool_input": { "command": "curl -sf https://shop.example.net/" },
+        "error": "Exit code 6\ncurl: (6) Could not resolve host: shop.example.net" },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUseFailure", "session_id": "s-curlf", "tool_name": "Bash",
+        "tool_input": { "command": "curl -sf https://shop.example.net/" },
+        "error": "Exit code 22\ncurl: (22) The requested URL returned error: 403" },
+      "expect": "context", "contains": "strike 2/2" }
+  ]
+}

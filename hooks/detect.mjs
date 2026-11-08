@@ -26,6 +26,8 @@ const STRONG = [
   // Generic denial as a title or heading
   [/<title>\s*Access Denied\s*<\/title>|<h1[^>]*>\s*Access Denied\s*<\/h1>/i, 'access-denied', 'generic'],
   [/(^|\n)HTTP\/[0-9.]+\s+(401|403|406|429|451|503)\b/i, 'http-blocked-status', 'http'],
+  // curl -f prints the status as an error line and no body
+  [/curl: \(22\) The requested URL returned error:?\s*(401|403|406|429|451|503)\b/i, 'http-blocked-status', 'http'],
 ];
 // Short error pages: only counted when the whole output is small, so docs prose does not trigger it.
 const SHORT_PAGE = /Too Many Requests|Rate limit exceeded|\bForbidden\b|Access Denied|Request blocked|try again later|Service Unavailable/i;

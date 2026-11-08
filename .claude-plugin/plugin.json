@@ -1,6 +1,6 @@
 {
   "name": "web-unlock-guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stops Claude from retrying a blocked website the same way: after 2 blocks on one method it must switch, and it can't point headless or default automation browsers at Cloudflare sites.",
   "author": {
     "name": "Lucas Saldanha Werneck",

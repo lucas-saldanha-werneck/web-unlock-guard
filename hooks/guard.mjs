@@ -99,13 +99,53 @@ function respText(tr) {
 }
 
 function loadJSON(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; } }
-function saveState(file, s) {
+// Drop sessions idle for 24 hours and Cloudflare marks older than 30 days. Runs on every load,
+// so expired entries never reach a rule.
+function prune(s) {
+  if (!s || typeof s !== 'object') return {};
   const now = Date.now();
   for (const k of Object.keys(s)) if (k !== '_cloudflare' && s[k] && s[k]._updated && s[k]._updated < now - DAY) delete s[k];
   const cf = s._cloudflare || {};
   for (const h of Object.keys(cf)) if (cf[h] < now - 30 * DAY) delete cf[h];
+  return s;
+}
+const loadState = file => prune(loadJSON(file));
+const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// Read-modify-write under a lock file, so parallel hooks don't overwrite each other's strikes.
+// A lock older than 10 seconds is left over from a killed hook (hooks time out at 5) and is removed.
+// If the lock can't be taken in 2 seconds, the update goes ahead without it (fail open).
+// The file is written to a temporary name and renamed, so a reader never sees half a file.
+function updateState(file, fn) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(s, null, 1));
+  const lock = file + '.lock';
+  const until = Date.now() + 2000;
+  let fd = null;
+  while (fd === null) {
+    try { fd = fs.openSync(lock, 'wx'); } catch (e) {
+      if (e.code !== 'EEXIST') break;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.unlinkSync(lock); continue; } } catch (_) { continue; }
+      if (Date.now() > until) break;
+      sleep(10 + Math.random() * 20);
+    }
+  }
+  try {
+    const s = loadState(file);
+    if (!fn(s)) return;
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(s, null, 1));
+    fs.renameSync(tmp, file);
+  } finally {
+    if (fd !== null) { fs.closeSync(fd); try { fs.unlinkSync(lock); } catch (_) {} }
+  }
+}
+
+// Reader proxies put the target URL in the path (r.jina.ai/https://site/...). Strikes belong to the target.
+function targetHost(firstHost, s) {
+  const h = firstHost(s);
+  if (h !== 'r.jina.ai') return h;
+  const m = /r\.jina\.ai\/+((?:https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}[^\s'"]*)/i.exec(String(s));
+  if (!m) return h;
+  return firstHost(/^https?:/i.test(m[1]) ? m[1] : 'https://' + m[1]) || h;
 }
 
 // Registry lookup: { "hosts": { "example.com": { tags, route, how, alias_of } } }.
@@ -138,16 +178,21 @@ async function main(hook) {
   const cfg = config();
   const { detect, inferLayer, NEXT_LAYER, firstHost } = await loadDetector(cfg);
   const sites = cfg.sitesFile ? loadJSON(cfg.sitesFile) : null;
-  const host = firstHost(cmd) || (ev !== 'PreToolUse' ? firstHost(respText(hook.tool_response)) : null);
   const layer = inferLayer(cmd) || (isFetch ? 'http' : null);
+  const state = loadState(cfg.stateFile);
+  const sid = hook.session_id || 'nosession';
+  const sess = state[sid] || {};
+  // Browser follow-ups (snapshot, eval, click) carry no URL: they act on the page the session last opened.
+  const isBrowser = /^browser-/.test(layer || '');
+  const cmdHost = targetHost(firstHost, cmd);
+  const host = cmdHost ||
+    (isBrowser && sess._last && sess._last[layer]) ||
+    (ev !== 'PreToolUse' ? targetHost(firstHost, respText(hook.tool_response)) : null);
   const info = siteInfo(sites, host);
-  const state = loadJSON(cfg.stateFile) || {};
   const seenCf = host && state._cloudflare && state._cloudflare[host];
   const cloudflare = (info && Array.isArray(info.tags) && info.tags.includes('cloudflare')) || !!seenCf;
   const cfWhy = info && Array.isArray(info.tags) && info.tags.includes('cloudflare') ? 'is tagged [cloudflare] in the sites registry' : 'served a Cloudflare challenge earlier';
   const known = info && info.route ? ` Known working route for ${info.host}: ${info.route}${info.how ? ' (' + info.how + ')' : ''}.` : '';
-  const sid = hook.session_id || 'nosession';
-  const sess = (state[sid] = state[sid] || {});
 
   if (ev === 'PreToolUse') {
     // R2 applies to any host.
@@ -177,20 +222,33 @@ async function main(hook) {
     if (!host || !layer) return;
     const text = respText(hook.tool_response) + '\n' + respText(hook.error || '');
     const r = detect(text) || {};
-    sess._updated = Date.now();
-    sess[host] = sess[host] || {};
-    if (r.blocked) {
-      if (r.vendor === 'cloudflare') (state._cloudflare = state._cloudflare || {})[host] = Date.now();
-      const st = (sess[host][layer] = sess[host][layer] || { count: 0, reasons: [] });
-      st.count += 1; st.last = Date.now();
-      if (!st.reasons.includes(r.reason)) st.reasons.push(r.reason);
-      saveState(cfg.stateFile, state);
+    // Only a tool call that succeeded with output resets the count; a failure we can't classify
+    // (DNS error, timeout) is neither a strike nor a success.
+    const success = !r.blocked && ev === 'PostToolUse' && text.trim() !== '';
+    const remember = isBrowser && !!cmdHost;
+    if (!r.blocked && !success && !remember) return;
+    let st = null;
+    updateState(cfg.stateFile, s => {
+      const ss = (s[sid] = s[sid] || {});
+      let changed = false;
+      if (remember && (!ss._last || ss._last[layer] !== host)) { (ss._last = ss._last || {})[layer] = host; changed = true; }
+      if (r.blocked) {
+        if (r.vendor === 'cloudflare') (s._cloudflare = s._cloudflare || {})[host] = Date.now();
+        ss[host] = ss[host] || {};
+        st = (ss[host][layer] = ss[host][layer] || { count: 0, reasons: [] });
+        st.count += 1; st.last = Date.now();
+        if (!st.reasons.includes(r.reason)) st.reasons.push(r.reason);
+        changed = true;
+      } else if (success && ss[host] && ss[host][layer]) { delete ss[host][layer]; changed = true; }
+      if (changed) ss._updated = Date.now();
+      return changed;
+    });
+    if (r.blocked && st) {
       const next = nextAdvice(layer, NEXT_LAYER, cfg);
       const msg = `web-unlock-guard: BLOCKED ${r.reason} (${r.vendor}) on ${host} via "${layer}", strike ${st.count}/${cfg.maxStrikes}.` +
         (st.count >= cfg.maxStrikes ? ` Limit reached: the next try with this method will be denied. Switch to ${next}.` : ` One more failure here and you must switch to ${next}.`) + known;
       return out({ hookSpecificOutput: { hookEventName: ev, additionalContext: msg }, systemMessage: msg });
     }
-    if (sess[host][layer]) { delete sess[host][layer]; saveState(cfg.stateFile, state); }
   }
 }
 

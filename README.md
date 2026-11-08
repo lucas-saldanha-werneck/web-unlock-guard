@@ -46,9 +46,53 @@ or use the environment variables.
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
 | `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
-| `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty | JSON registry of known hosts (see below). |
-| `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty | Your own companion skill folder (see Optional extras). |
+| `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty: `~/.config/web-unlock/sites.json` (or `$WEB_UNLOCK_HOME/sites.json`) if it exists, else the companion skill's | JSON registry of known hosts (see below). |
+| `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty: `~/.claude/skills/web-unlock`, else the installed web-unlock plugin | Your own companion skill folder (see Optional extras). |
+| `rules_file` | `WEB_UNLOCK_GUARD_RULES` | empty: `~/.config/web-unlock-guard/rules.json` if it exists | Your own deny rules and extra tool names (see below). |
 | | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
+
+Option values live in your `settings.json` (`pluginConfigs`), and the files they point to live in your own
+folders, so a plugin update changes neither. Keep your registry and rules file outside the plugin folder.
+
+### Your own rules file
+
+Rules that only make sense on your machine go in a JSON file instead of a fork of the hook. From
+[`examples/rules.example.json`](examples/rules.example.json), which keeps an automation Chrome from stealing
+focus:
+
+```json
+{
+  "webish": [
+    { "word": "mcporter", "layer": "fetch-render" },
+    "my-scraper-cli"
+  ],
+  "deny": [
+    {
+      "name": "no-json-new",
+      "pattern": "/json/new\\b",
+      "message": "Opening a tab with /json/new brings the automation Chrome to the front. Use {skill_dir}/bin/chrome-real.sh start \"<url>\"."
+    },
+    {
+      "name": "automation-chrome-stays-behind",
+      "pattern": "activate application \"Google Chrome Beta\"|open\\s+(-[a-zA-Z]+\\s+)*-a\\s+[\"']?(/Applications/)?Google Chrome Beta",
+      "unless": "open\\s+(-[a-zA-Z]*g[a-zA-Z]*\\s+)",
+      "message": "Do not bring the automation Chrome to the front by hand."
+    }
+  ]
+}
+```
+
+- `deny`: each rule denies a `PreToolUse` call whose command matches `pattern` (a JavaScript regular
+  expression) and does not match `unless`. Optional `flags` (for example `"i"`) apply to both, and `tools` (a
+  regular expression on the tool name, such as `"^Bash$"`) limits the rule to some tools. These rules run
+  before the built-in ones and on any command the hook sees, web or not. `{skill_dir}` in the message becomes
+  the companion skill folder. The message ends with the `WEB_UNLOCK_FORCE=1` hint, and that prefix skips these
+  rules too.
+- `webish`: extra tool names that make a command count as web work. A plain word only lets such commands
+  reach the built-in checks; with a `layer` (one of the methods listed under How it works), blocked results of
+  that tool count strikes under that method, so R4 applies to it.
+- A rule with an invalid regular expression is skipped and the others still apply. A missing or unreadable
+  file means no extra rules.
 
 ### Sites registry
 
@@ -83,13 +127,16 @@ strike messages for that host.
 None of these are needed. Without them, all four rules work with the bundled detector and no
 registry.
 
-- **A companion skill folder of your own.** Point `skill_dir` at it. If `skill_dir` is empty and
-  `~/.claude/skills/web-unlock/SKILL.md` exists, that folder is used. The hooks look for three
+- **A companion skill folder of your own.** Point `skill_dir` at it. If `skill_dir` is empty, the hooks
+  use `~/.claude/skills/web-unlock` when it has a `SKILL.md`, else the skill of the
+  [web-unlock](https://github.com/lucas-saldanha-werneck/web-unlock) plugin when it is installed (found
+  through `~/.claude/plugins/installed_plugins.json`, so it follows plugin updates). The hooks look for three
   files in it:
   - `lib/detect.mjs`: replaces the bundled detector. It must export `detect`, `inferLayer` and
     `firstHost`, and may export `NEXT_LAYER`. If it fails to load or lacks an export, the bundled
     detector is used.
-  - `sites.json`: used as the registry when `sites_file` is empty.
+  - `sites.json`: used as the registry when `sites_file` is empty and there is no
+    `~/.config/web-unlock/sites.json` (the web-unlock skill's own user registry).
   - `bin/chrome-real.sh`: suggested when a `browser-automation` or `browser-stealth` method is
     blocked.
 - **Scrapling.** When the `scrapling` CLI is on `PATH`, it is suggested after an `http` or
@@ -119,7 +166,8 @@ joined by `;`, `&&`, `||`, `|` or new lines, or the entries of a `ctx_batch_exec
   tied to one of them. No strike is counted and no count is reset for that call. The rules
   below still check every host in it before it runs.
 
-A `PreToolUse` hook then applies four rules to every host and method in the call:
+A `PreToolUse` hook first applies the deny rules from your rules file, if any, then four rules to every
+host and method in the call:
 
 | Rule | What it denies |
 |---|---|
@@ -149,7 +197,9 @@ node tests/run.mjs
 
 This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
 rule or case, with an empty temporary home folder. It also checks fail-open behavior, the companion
-skill folder, expiry of old entries, and parallel hooks writing the strike file at once.
+skill folder and plugin, the user registry, your rules file (deny rules, `unless`, `tools`, bad regexes,
+extra web tool names, the option and the default path), expiry of old entries, and parallel hooks writing
+the strike file at once.
 
 ## Uninstall
 

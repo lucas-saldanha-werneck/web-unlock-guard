@@ -1,0 +1,12 @@
+{
+  "description": "Commands that are not web access are ignored, even when the output looks like a block page",
+  "steps": [
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-ign", "tool_name": "Bash",
+        "tool_input": { "command": "ls -la" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-ign", "tool_name": "Bash",
+        "tool_input": { "command": "cat notes.txt" },
+        "tool_response": { "stdout": "Just a moment...\nAccess Denied" } },
+      "expect": "silent" }
+  ]
+}

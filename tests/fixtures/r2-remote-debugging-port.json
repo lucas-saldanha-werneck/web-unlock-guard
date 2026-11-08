@@ -1,0 +1,11 @@
+{
+  "description": "R2: --remote-debugging-port without --user-data-dir is denied on any host; with it, allowed",
+  "steps": [
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r2", "tool_name": "Bash",
+        "tool_input": { "command": "open -na 'Google Chrome' --args --remote-debugging-port=9222 https://example.org" } },
+      "expect": "deny", "contains": "R2" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r2", "tool_name": "Bash",
+        "tool_input": { "command": "open -na 'Google Chrome' --args --remote-debugging-port=9222 --user-data-dir=$HOME/.chrome-automation https://example.org" } },
+      "expect": "silent" }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "web-unlock-guard",
+  "version": "0.1.0",
+  "description": "Stops Claude from retrying a blocked website the same way: after 2 blocks on one method it must switch, and it can't point headless or default automation browsers at Cloudflare sites.",
+  "author": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "homepage": "https://github.com/lucas-saldanha-werneck/web-unlock-guard",
+  "repository": "https://github.com/lucas-saldanha-werneck/web-unlock-guard",
+  "license": "MIT",
+  "keywords": [
+    "hooks",
+    "scraping",
+    "cloudflare",
+    "browser-automation",
+    "guardrails"
+  ],
+  "userConfig": {
+    "max_strikes": {
+      "type": "string",
+      "title": "Blocks before switching method",
+      "description": "How many blocked results on the same host and method before the next try with that method is denied.",
+      "default": "2"
+    },
+    "sites_file": {
+      "type": "string",
+      "title": "Sites registry (optional)",
+      "description": "JSON file with known hosts: tags such as cloudflare, and the route that worked. Empty = no registry (or the companion skill's sites.json, if found).",
+      "default": ""
+    },
+    "skill_dir": {
+      "type": "string",
+      "title": "Companion skill folder (optional)",
+      "description": "Folder of your own web-access skill. If it has lib/detect.mjs, its detector is used; if it has sites.json, that is the registry. Empty = ~/.claude/skills/web-unlock if it exists.",
+      "default": ""
+    }
+  }
+}

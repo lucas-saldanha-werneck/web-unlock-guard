@@ -1,0 +1,25 @@
+{
+  "description": "R4: two blocks on the same host + method, then the third try with that method is denied; another method or WEB_UNLOCK_FORCE=1 is allowed",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-r4", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://blocked.example.com/p -o page.html; cat page.html" },
+        "tool_response": { "stdout": "<html><head><title>Just a moment...</title></head><body></body></html>", "stderr": "" } },
+      "expect": "context", "contains": "strike 1/2" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-r4", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s -A 'Mozilla/5.0' https://blocked.example.com/p" },
+        "tool_response": { "stdout": "<title>Just a moment...</title>", "stderr": "" } },
+      "expect": "context", "contains": "Limit reached" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r4", "tool_name": "Bash",
+        "tool_input": { "command": "wget -qO- https://blocked.example.com/p" } },
+      "expect": "deny", "contains": "R4" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r4", "tool_name": "Bash",
+        "tool_input": { "command": "WEB_UNLOCK_FORCE=1 curl -s https://blocked.example.com/p" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r4", "tool_name": "Bash",
+        "tool_input": { "command": "firecrawl scrape https://blocked.example.com/p" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "other-session", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://blocked.example.com/p" } },
+      "expect": "silent" }
+  ]
+}

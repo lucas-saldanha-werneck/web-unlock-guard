@@ -1,0 +1,15 @@
+{
+  "description": "R3 with zero dependencies: a host that served a Cloudflare challenge is remembered, then a headless browser against it is denied",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-r3", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://cf.example.net/" },
+        "tool_response": { "stdout": "<script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\"></script>" } },
+      "expect": "context", "contains": "cloudflare" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r3", "tool_name": "Bash",
+        "tool_input": { "command": "node -e \"const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({headless: true});const p=await b.newPage();await p.goto('https://cf.example.net/')})()\"" } },
+      "expect": "deny", "contains": "R3" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r3", "tool_name": "Bash",
+        "tool_input": { "command": "chromium --headless --dump-dom https://unrelated.example.org/" } },
+      "expect": "silent" }
+  ]
+}

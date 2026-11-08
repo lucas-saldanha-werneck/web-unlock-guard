@@ -1,0 +1,15 @@
+{
+  "name": "web-unlock-guard",
+  "description": "Hooks that keep Claude from hammering blocked websites with the same method.",
+  "owner": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "plugins": [
+    {
+      "name": "web-unlock-guard",
+      "source": "./",
+      "description": "After 2 blocks on one method Claude must switch; no headless or default automation browsers on Cloudflare sites; no --remote-debugging-port without --user-data-dir."
+    }
+  ]
+}

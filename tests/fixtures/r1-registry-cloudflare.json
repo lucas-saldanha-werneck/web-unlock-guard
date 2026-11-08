@@ -1,0 +1,15 @@
+{
+  "description": "R1 with a sites registry: a default automation browser against a host tagged [cloudflare] is denied and the known route is shown; the real-browser mode is allowed",
+  "env": { "WEB_UNLOCK_GUARD_SITES": "${ROOT}/examples/sites.example.json" },
+  "steps": [
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r1", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser open https://shop.example-shop.com/cart" } },
+      "expect": "deny", "contains": "Known working route" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r1", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --auto-connect open https://shop.example-shop.com/cart" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-r1", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser open https://not-in-registry.example.org/" } },
+      "expect": "silent" }
+  ]
+}

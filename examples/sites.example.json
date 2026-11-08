@@ -1,0 +1,15 @@
+{
+  "hosts": {
+    "example-shop.com": {
+      "tags": ["cloudflare", "logged"],
+      "route": "browser-real",
+      "how": "agent-browser --auto-connect on your own Chrome profile"
+    },
+    "shop.example-shop.com": { "alias_of": "example-shop.com" },
+    "*.example-jobs.io": {
+      "tags": ["antibot"],
+      "route": "fetch-unlock",
+      "how": "the site's public JSON API at /api/jobs"
+    }
+  }
+}

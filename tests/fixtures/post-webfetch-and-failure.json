@@ -1,0 +1,17 @@
+{
+  "description": "Strikes from WebFetch results and from PostToolUseFailure errors; a clean result resets the count",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-post", "tool_name": "WebFetch",
+        "tool_input": { "url": "https://api.example.io/data", "prompt": "summarize" },
+        "tool_response": "HTTP/1.1 429 Too Many Requests" },
+      "expect": "context", "contains": "strike 1/2" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-post", "tool_name": "WebFetch",
+        "tool_input": { "url": "https://api.example.io/data", "prompt": "summarize" },
+        "tool_response": "The page lists 12 products with prices and descriptions, plus a long footer with links to the help center, careers, and the privacy policy." },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUseFailure", "session_id": "s-post", "tool_name": "Bash",
+        "tool_input": { "command": "curl -sf https://api.example.io/data" },
+        "error": "403 Forbidden" },
+      "expect": "context", "contains": "strike 1/2" }
+  ]
+}

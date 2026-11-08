@@ -89,15 +89,20 @@ function rulesPath() {
 // that exists (O_EXCL), and never throws: a folder that cannot be written is simply left alone. A relative
 // rules_file is not seeded: it would land in whatever project folder the session is in.
 function seedRules(file) {
-  let fd;
+  let fd, written = false;
   try {
     if (!file || !path.isAbsolute(file) || fs.existsSync(file)) return;
     const data = fs.readFileSync(path.join(HERE, 'rules.default.json'));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fd = fs.openSync(file, 'wx');
-    fs.writeSync(fd, data);
+    for (let off = 0; off < data.length;) off += fs.writeSync(fd, data, off);
+    written = true;
   } catch (_) { /* exists, or not writable: nothing to do */ } finally {
-    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+      // A failed write (disk full, ...) must not leave an empty or cut-off file that is then kept forever.
+      if (!written) try { fs.unlinkSync(file); } catch (_) {}
+    }
   }
 }
 

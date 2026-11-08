@@ -359,6 +359,17 @@ console.log('\n# first-run seed');
   const r7 = spawnSync(process.execPath, [GUARD], { input: start, env: env7, cwd: h7, encoding: 'utf8', timeout: 10000 });
   ok('relative rules_file is not seeded into the current folder', r7.status === 0 && r7.stdout === '' && !fs.existsSync(path.join(h7, 'rel')));
 
+  // A write that fails half-way (disk full) leaves no file behind, so the next run seeds it whole.
+  {
+    const { home: h8, env: env8 } = sandbox();
+    const failWrite = "data:text/javascript,import fs from 'node:fs'; fs.writeSync = () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); };";
+    const r8 = spawnSync(process.execPath, ['--import', failWrite, GUARD], { input: start, env: env8, encoding: 'utf8', timeout: 10000 });
+    const f8 = path.join(h8, '.config', 'web-unlock-guard', 'rules.json');
+    ok('failed write -> exit 0 and no empty rules file left behind', r8.status === 0 && !fs.existsSync(f8), `exit ${r8.status} ${r8.stderr}`);
+    run(env8, start);
+    ok('and the next run seeds the whole file', fs.existsSync(f8) && fs.readFileSync(f8).equals(DEFAULT));
+  }
+
   const { home: h6 } = sandbox();
   const ro = path.join(h6, 'ro');
   fs.mkdirSync(ro); fs.chmodSync(ro, 0o555);

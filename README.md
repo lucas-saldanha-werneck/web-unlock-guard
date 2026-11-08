@@ -48,11 +48,19 @@ or use the environment variables.
 | `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
 | `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty: the `sites.json` of a `skill_dir` you set, else `~/.config/web-unlock/sites.json` (or `$WEB_UNLOCK_HOME/sites.json`), else the `sites.json` of a companion found on its own | JSON registry of known hosts (see below). A setting you made always beats a default. |
 | `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty: `skills/web-unlock` in `$CLAUDE_CONFIG_DIR` or `~/.claude`, else the installed web-unlock plugin | Your own companion skill folder (see Optional extras). |
-| `rules_file` | `WEB_UNLOCK_GUARD_RULES` | empty: `~/.config/web-unlock-guard/rules.json` if it exists | Your own deny rules and extra tool names (see below). |
+| `rules_file` | `WEB_UNLOCK_GUARD_RULES` | empty: `~/.config/web-unlock-guard/rules.json` (created on first run) | Your own deny rules and extra tool names (see below). |
 | | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `state/web-unlock-guard.json` under `$CLAUDE_CONFIG_DIR` (else `~/.claude`) when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
 
 Option values live in your `settings.json` (`pluginConfigs`), and the files they point to live in your own
 folders, so a plugin update changes neither. Keep your registry and rules file outside the plugin folder.
+
+### Your settings
+
+Your rules file is `~/.config/web-unlock-guard/rules.json` (or the path in `rules_file` /
+`WEB_UNLOCK_GUARD_RULES`). The plugin creates it by itself the first time it runs (at session start, or on
+the first tool call), from [`hooks/rules.default.json`](hooks/rules.default.json): empty `webish` and `deny`
+lists with a short note on each, which behave exactly like having no file. Plugin updates never touch it, and
+the plugin never overwrites or changes a rules file that is already there.
 
 ### Your own rules file
 
@@ -215,8 +223,10 @@ node tests/run.mjs
 This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
 rule or case, with an empty temporary home folder. It also checks fail-open behavior, the companion
 skill folder and plugin, the user registry, your rules file (deny rules, `unless`, `tools`, bad regexes,
-extra web tool names, the option and the default path), expiry of old entries, and parallel hooks writing
-the strike file at once.
+extra web tool names, the option and the default path), the first-run rules file (created when missing,
+an existing file byte-identical, overrides respected, no crash on a read-only folder, the seeded file
+behaving like no file on every fixture), expiry of old entries, and parallel hooks writing the strike file at
+once.
 
 ## Uninstall
 

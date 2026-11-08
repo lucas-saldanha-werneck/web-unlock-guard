@@ -1,0 +1,10 @@
+{
+  "_doc": {
+    "about": "Your own rules for web-unlock-guard. Created by the plugin on its first run; plugin updates never touch it. Both lists start empty, which behaves exactly like having no file. Keys starting with _ are notes and are ignored. Full example: examples/rules.example.json in the plugin repo.",
+    "webish": "Extra tool names that make a command count as web work. A word (\"my-scraper-cli\") or {\"word\": \"mcporter\", \"layer\": \"fetch-render\"} so its blocks count strikes under that method. Layers: http, fetch-render, fetch-unlock, browser-automation, browser-cft, browser-stealth, browser-real, browser-cloud.",
+    "deny": "Extra deny rules for PreToolUse: {\"name\", \"pattern\" (JavaScript regex), \"flags\", \"unless\" (regex), \"tools\" (regex on the tool name), \"message\"}. {skill_dir} in the message becomes the companion skill folder.",
+    "other_options": "max_strikes (2), sites_file, skill_dir and rules_file are plugin options, set with /plugin configure web-unlock-guard@web-unlock-guard or WEB_UNLOCK_GUARD_* environment variables, not in this file."
+  },
+  "webish": [],
+  "deny": []
+}

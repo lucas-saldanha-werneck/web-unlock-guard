@@ -313,5 +313,86 @@ for (const k of ['existsSync', 'readFileSync', 'statSync']) { const f = fs[k]; f
   check('install for the current project beats user scope', run(env, post('s-v2', path.join(proj, 'sub'))), 'context', 'this-project');
 }
 
+// 10. First run: the rules file is created where the guard reads it, never overwritten, never a crash
+console.log('\n# first-run seed');
+{
+  const DEFAULT = fs.readFileSync(path.join(ROOT, 'hooks', 'rules.default.json'));
+  const ok = (label, cond, extra) => { if (cond) pass++; else fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${cond ? '' : '  ' + (extra || '')}`); };
+  const start = JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', session_id: 's-seed' });
+  const pre = cmd => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's-seed', tool_name: 'Bash', tool_input: { command: cmd } });
+
+  const { home, env } = sandbox();
+  const def = path.join(home, '.config', 'web-unlock-guard', 'rules.json');
+  let r = run(env, start);
+  ok('SessionStart, no rules file -> created from rules.default.json, silent, exit 0',
+    r.code === 0 && r.stdout === '' && fs.existsSync(def) && fs.readFileSync(def).equals(DEFAULT), `exit ${r.code} stdout ${r.stdout}`);
+  const seeded = JSON.parse(fs.readFileSync(def, 'utf8'));
+  ok('seeded file has empty webish and deny lists', Array.isArray(seeded.webish) && !seeded.webish.length && Array.isArray(seeded.deny) && !seeded.deny.length);
+
+  const mine = '{"deny":[{"name":"mine","pattern":"\\\\bforbidden-tool\\\\b","message":"no"}]}\n';
+  fs.writeFileSync(def, mine);
+  r = run(env, start);
+  ok('existing rules file is byte-identical after SessionStart', r.code === 0 && r.stdout === '' && fs.readFileSync(def, 'utf8') === mine);
+  check('and its rule still applies', run(env, pre('forbidden-tool --go')), 'deny', 'mine');
+  ok('existing rules file is byte-identical after a tool call', fs.readFileSync(def, 'utf8') === mine);
+
+  const { home: h2, env: env2 } = sandbox();
+  run(env2, pre('ls'));
+  ok('first tool call also creates a missing rules file', fs.existsSync(path.join(h2, '.config', 'web-unlock-guard', 'rules.json')));
+
+  const { home: h3, env: env3 } = sandbox({ WEB_UNLOCK_GUARD_RULES: '${HOME}/elsewhere/my-rules.json' });
+  run(env3, start);
+  ok('WEB_UNLOCK_GUARD_RULES is respected (created there, nothing under ~/.config)',
+    fs.existsSync(path.join(h3, 'elsewhere', 'my-rules.json')) && !fs.existsSync(path.join(h3, '.config')));
+  const { home: h4, env: env4 } = sandbox({ CLAUDE_PLUGIN_OPTION_RULES_FILE: '${HOME}/opt/rules.json' });
+  run(env4, start);
+  ok('the rules_file plugin option is respected', fs.existsSync(path.join(h4, 'opt', 'rules.json')) && !fs.existsSync(path.join(h4, '.config')));
+
+  const { home: h5 } = sandbox();
+  fs.writeFileSync(path.join(h5, 'afile'), 'x');
+  const { env: env5 } = sandbox({ WEB_UNLOCK_GUARD_RULES: path.join(h5, 'afile', 'rules.json') });
+  r = run(env5, start);
+  ok('rules folder that cannot be created (under a file) -> exit 0, silent', r.code === 0 && r.stdout === '', `exit ${r.code} stdout ${r.stdout}`);
+  check('and the guard still enforces R2', run(env5, pre('chrome --remote-debugging-port=9333 https://example.org')), 'deny', 'R2');
+
+  const { home: h6 } = sandbox();
+  const ro = path.join(h6, 'ro');
+  fs.mkdirSync(ro); fs.chmodSync(ro, 0o555);
+  let writable = true;
+  try { fs.accessSync(ro, fs.constants.W_OK); } catch (_) { writable = false; }
+  if (process.platform === 'win32' || writable) ok('read-only folder check skipped (Windows or root)', true);
+  else {
+    const { env: env6 } = sandbox({ WEB_UNLOCK_GUARD_RULES: path.join(ro, 'sub', 'rules.json') });
+    r = run(env6, start);
+    ok('read-only parent folder -> exit 0, silent, nothing written', r.code === 0 && r.stdout === '' && !fs.existsSync(path.join(ro, 'sub')));
+  }
+  fs.chmodSync(ro, 0o755);
+
+  // The seeded file behaves exactly like no file: every fixture step gives the same output with the seeded
+  // rules file as with a rules path that can never exist.
+  let same = 0;
+  const diff = [];
+  for (const f of fs.readdirSync(path.join(ROOT, 'tests', 'fixtures')).filter(f => f.endsWith('.json')).sort()) {
+    const fx = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', f), 'utf8'));
+    if (fx.env && (fx.env.WEB_UNLOCK_GUARD_RULES || fx.env.CLAUDE_PLUGIN_OPTION_RULES_FILE)) continue;
+    const { home: hn, env: envNone } = sandbox(fx.env || {});
+    fs.writeFileSync(path.join(hn, 'afile'), 'x');
+    envNone.WEB_UNLOCK_GUARD_RULES = path.join(hn, 'afile', 'rules.json');
+    const { home: hs, env: envSeeded } = sandbox(fx.env || {});
+    run(envSeeded, start);
+    if (!fs.existsSync(path.join(hs, '.config', 'web-unlock-guard', 'rules.json'))) { diff.push(`${f}: not seeded`); continue; }
+    for (const [i, st] of fx.steps.entries()) {
+      const a = (run(envNone, JSON.stringify(st.event)).stdout || '').replaceAll(JSON.stringify(hn).slice(1, -1), 'H').replaceAll(hn, 'H');
+      const b = (run(envSeeded, JSON.stringify(st.event)).stdout || '').replaceAll(JSON.stringify(hs).slice(1, -1), 'H').replaceAll(hs, 'H');
+      if (a === b) same++; else diff.push(`${f} step ${i + 1}: ${a.slice(0, 120)} | ${b.slice(0, 120)}`);
+    }
+  }
+  ok(`seeded rules file behaves like no file (${same} fixture steps identical)`, !diff.length && same > 0, diff.join('; '));
+
+  const hooks = JSON.parse(fs.readFileSync(path.join(ROOT, 'hooks', 'hooks.json'), 'utf8')).hooks;
+  const ss = hooks.SessionStart && hooks.SessionStart[0].hooks[0];
+  ok('hooks.json runs guard.mjs with node at SessionStart', !!ss && ss.command === 'node' && ss.args[0] === '${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

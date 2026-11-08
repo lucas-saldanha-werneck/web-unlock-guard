@@ -38,7 +38,7 @@
     "rules_file": {
       "type": "string",
       "title": "Your own rules file (optional)",
-      "description": "JSON file with extra deny rules (regex pattern + message) and extra tool names to watch. Empty = ~/.config/web-unlock-guard/rules.json if it exists.",
+      "description": "JSON file with extra deny rules (regex pattern + message) and extra tool names to watch. Empty = ~/.config/web-unlock-guard/rules.json, which the plugin creates on first run.",
       "default": ""
     }
   }

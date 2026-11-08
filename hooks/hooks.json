@@ -1,5 +1,13 @@
 {
+  "description": "Stops repeated retries of a blocked site; creates ~/.config/web-unlock-guard/rules.json on first run.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 5 }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?",

@@ -8,6 +8,7 @@
 //   Pre  R3: deny headless browsers against a Cloudflare host.
 //   Pre  R4: deny the next try on the same host + method after N blocks (default 2): switch method.
 //   Pre  your own deny rules, from a rules file (rules_file option, else ~/.config/web-unlock-guard/rules.json).
+//   SessionStart: create that rules file from hooks/rules.default.json if it is missing (also done on first use).
 //   Every host in a compound command or batch is checked before it runs.
 //   Post   : detect a block signature in the tool output, count a strike per host + method,
 //            and remember hosts that served a Cloudflare challenge. A call that reaches several
@@ -81,6 +82,22 @@ function findCompanion(cwd) {
 // Cheap part of the settings: paths only, read before anything else.
 function rulesPath() {
   return expand(setting('CLAUDE_PLUGIN_OPTION_RULES_FILE', 'WEB_UNLOCK_GUARD_RULES')) || path.join(HOME, '.config', 'web-unlock-guard', 'rules.json');
+}
+
+// First run: create your rules file from hooks/rules.default.json (empty lists = same as no file) where the
+// guard reads it. Runs at SessionStart and whenever the file is missing. Never overwrites or changes anything
+// that exists (O_EXCL), and never throws: a folder that cannot be written is simply left alone.
+function seedRules(file) {
+  let fd;
+  try {
+    if (!file || fs.existsSync(file)) return;
+    const data = fs.readFileSync(path.join(HERE, 'rules.default.json'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fd = fs.openSync(file, 'wx');
+    fs.writeSync(fd, data);
+  } catch (_) { /* exists, or not writable: nothing to do */ } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+  }
 }
 
 // The rest, resolved only for web commands (or when a rule message needs {skill_dir}).
@@ -299,10 +316,13 @@ async function main(hook) {
   const tool = hook.tool_name || '';
   const cmd = cmdText(hook.tool_input);
   const isFetch = /WebFetch/.test(tool);
+  if (ev === 'SessionStart') return seedRules(rulesPath());
   if (FORCE.test(cmd)) return;
 
   // Your rules file is the only thing read before the web check; without one, non-web calls stop here.
-  const rules = loadRules(rulesPath());
+  const rulesFile = rulesPath();
+  seedRules(rulesFile);
+  const rules = loadRules(rulesFile);
   if (!rules.deny.length && !rules.webish.length && !BASE_WEBISH.test(cmd) && !isFetch) return;
   let cfg = null;
   const getCfg = () => (cfg = cfg || config(hook.cwd));

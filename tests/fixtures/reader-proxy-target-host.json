@@ -1,0 +1,19 @@
+{
+  "description": "Strikes through the r.jina.ai reader proxy count against the target site, not the proxy, so other sites stay reachable through it",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-jina", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://r.jina.ai/https://first.example.com/page" },
+        "tool_response": { "stdout": "Title: \nWarning: Target URL returned error 403: Forbidden" } },
+      "expect": "context", "contains": "on first.example.com" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-jina", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://r.jina.ai/https://first.example.com/page" },
+        "tool_response": { "stdout": "Title: \nWarning: Target URL returned error 403: Forbidden" } },
+      "expect": "context", "contains": "Limit reached" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-jina", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://r.jina.ai/https://second.example.com/" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-jina", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://r.jina.ai/https://first.example.com/other" } },
+      "expect": "deny", "contains": "R4: 2 blocks on first.example.com" }
+  ]
+}

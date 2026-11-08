@@ -48,7 +48,7 @@ or use the environment variables.
 | `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
 | `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty | JSON registry of known hosts (see below). |
 | `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty | Your own companion skill folder (see Optional extras). |
-| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. Session entries are dropped after 24 hours. |
+| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
 
 ### Sites registry
 
@@ -101,9 +101,25 @@ registry.
 
 A `PostToolUse` / `PostToolUseFailure` hook reads each web tool result for block signatures:
 Cloudflare, DataDome, PerimeterX, Kasada, Imperva, Akamai, captcha widgets, LinkedIn's authwall,
-HTTP 401/403/406/429/451/503, short error pages and near-empty JavaScript shells. Each block
-counts a strike per session, host and method. A clean result resets the count for that method.
-A `PreToolUse` hook then applies four rules:
+HTTP 401/403/406/429/451/503 (including the `curl: (22)` line that `curl -f` prints), short
+error pages and near-empty JavaScript shells. Captcha and Turnstile widget markers count only on
+a thin page (under 600 visible characters of HTML, or under 2000 characters of plain text),
+because ordinary pages embed them in forms. Each block counts a strike per session, host and
+method. A tool call that succeeds with a clean result resets the count for that method. A failure
+with no block signature, such as a DNS error or a timeout, leaves the count as it is.
+
+The host is the first URL in each request. A call can hold several requests: shell commands
+joined by `;`, `&&`, `||`, `|` or new lines, or the entries of a `ctx_batch_execute` call.
+
+- Through the r.jina.ai reader (`r.jina.ai/https://site.example/`), strikes count against the
+  target site, so one blocked site doesn't use up the reader for every other site.
+- A browser command with no URL (`agent-browser snapshot`, `eval`, `click`) counts against the
+  host that the same session last opened with that method.
+- When one call reaches several hosts, or one host with several methods, its output can't be
+  tied to one of them. No strike is counted and no count is reset for that call. The rules
+  below still check every host in it before it runs.
+
+A `PreToolUse` hook then applies four rules to every host and method in the call:
 
 | Rule | What it denies |
 |---|---|
@@ -116,10 +132,11 @@ A host counts as Cloudflare when it served a Cloudflare challenge earlier (remem
 days) or when the sites registry tags it `cloudflare`.
 
 The methods are `http` (curl, wget, httpx, requests, fetch, WebFetch), `fetch-render` (r.jina.ai,
-Firecrawl), `fetch-unlock` (Apify, Bright Data, ScraperAPI, ZenRows, Scrapfly),
+Firecrawl, and WebFetch through r.jina.ai), `fetch-unlock` (Apify, Bright Data, ScraperAPI, ZenRows, Scrapfly),
 `browser-automation`, `browser-stealth` (Patchright, Camoufox, nodriver, Scrapling),
 `browser-real` (your own Chrome via `agent-browser --auto-connect`, `claude --chrome`, OpenCLI)
-and `browser-cloud`.
+and `browser-cloud`. A WebFetch call is always `http` or `fetch-render`, whatever tool names
+appear in its URL.
 
 To skip every check for one call, put `WEB_UNLOCK_FORCE=1` in the command. The hooks fail open:
 bad input or an internal error lets the tool call through.
@@ -131,8 +148,8 @@ node tests/run.mjs
 ```
 
 This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
-rule, with an empty temporary `HOME`. It also checks fail-open behavior and the companion skill
-folder.
+rule or case, with an empty temporary home folder. It also checks fail-open behavior, the companion
+skill folder, expiry of old entries, and parallel hooks writing the strike file at once.
 
 ## Uninstall
 
@@ -149,9 +166,12 @@ outside the plugin system, delete `~/.claude/state/web-unlock-guard.json` yourse
 - Tested on macOS with Claude Code 2.1.319 in the terminal. A real `claude -p` session confirmed
   the plugin loads and R2 denies the call with the message above. The strike rules (R4, R3) were
   tested with the sample hook input in `tests/`, not against a live blocked site.
-- Not tested in the desktop app, on Linux or on Windows.
+- The test suite runs on Linux, macOS and Windows in GitHub Actions. The plugin was not tried in
+  a live Claude Code session on Linux or Windows, or in the desktop app.
 - Detection works on text patterns. A block page it doesn't know won't count as a strike, and a
   page that quotes a block signature can count as one.
+- A batch or compound command with several hosts never adds strikes. Repeating a blocked request
+  inside such a call is caught only when that host already has strikes from single-host calls.
 
 ## License
 

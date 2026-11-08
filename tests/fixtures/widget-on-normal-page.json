@@ -1,0 +1,98 @@
+{
+ "description": "A normal page that embeds a Turnstile or reCAPTCHA form widget is not a block: no strike, no Cloudflare mark, so R1 does not deny the host later. A thin page with only the widget still counts.",
+ "steps": [
+  {
+   "event": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "curl -s https://contact.example.com/"
+    },
+    "tool_response": {
+     "stdout": "<html><head><title>Contact us</title><script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\" async defer></script></head><body><h1>Contact us</h1><p>We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. </p><form action=\"/send\" method=\"post\"><input name=\"email\"><textarea name=\"msg\"></textarea><div class=\"cf-turnstile\" data-sitekey=\"0x4AAAAAAAexample\"></div><button>Send</button></form></body></html>"
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "curl -s https://contact.example.com/"
+    },
+    "tool_response": {
+     "stdout": "<html><head><title>Contact us</title><script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\" async defer></script></head><body><h1>Contact us</h1><p>We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. </p><form action=\"/send\" method=\"post\"><input name=\"email\"><textarea name=\"msg\"></textarea><div class=\"cf-turnstile\" data-sitekey=\"0x4AAAAAAAexample\"></div><button>Send</button></form></body></html>"
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PreToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "curl -s https://contact.example.com/"
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PreToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "agent-browser open https://contact.example.com/"
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "curl -s https://form.example.com/"
+    },
+    "tool_response": {
+     "stdout": "<html><head><title>Contact us</title><script src=\"https://www.google.com/recaptcha/api.js\" async defer></script></head><body><h1>Contact us</h1><p>We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. We answer every message within two working days. Tell us what you need, the size of your team and the date you want to start, and we will send a quote with the next steps. </p><form action=\"/send\" method=\"post\"><input name=\"email\"><textarea name=\"msg\"></textarea><div class=\"g-recaptcha\" data-sitekey=\"0x4AAAAAAAexample\"></div><button>Send</button></form></body></html>"
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "agent-browser --auto-connect snapshot https://snap.example.com/"
+    },
+    "tool_response": {
+     "stdout": "- heading \"Contact us\"\n- paragraph: We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. We answer every message within two working days. Tell us what you need and we will send a quote. \n- iframe \"Widget containing a Cloudflare security challenge\"\n  - checkbox \"Verify you are human\"\n- button \"Send\""
+    }
+   },
+   "expect": "silent"
+  },
+  {
+   "event": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "s-widget",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "curl -s https://gate.example.com/"
+    },
+    "tool_response": {
+     "stdout": "<html><head><title>gate.example.com</title></head><body><p>gate.example.com</p><div class=\"cf-turnstile\" data-sitekey=\"0x4AAAAAAAexample\"></div><script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\"></script></body></html>"
+    }
+   },
+   "expect": "context",
+   "contains": "(cloudflare) on gate.example.com"
+  }
+ ]
+}

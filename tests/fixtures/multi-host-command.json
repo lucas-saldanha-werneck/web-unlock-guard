@@ -1,0 +1,33 @@
+{
+  "description": "A compound shell command or a batch with several hosts: a block is not charged to the first host, and every host in the call is checked before it runs",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-multi", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://healthy.example.com/; curl -s https://blocked.example.com/" },
+        "tool_response": { "stdout": "<h1>Welcome</h1>\nHTTP/1.1 403 Forbidden" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-multi", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://healthy.example.com/" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-multi", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://blocked.example.com/ -o p.html && cat p.html" },
+        "tool_response": { "stdout": "HTTP/1.1 403 Forbidden" } },
+      "expect": "context", "contains": "on blocked.example.com via \"http\", strike 1/2" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-multi", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://blocked.example.com/" },
+        "tool_response": { "stdout": "HTTP/1.1 403 Forbidden" } },
+      "expect": "context", "contains": "Limit reached" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-multi", "tool_name": "Bash",
+        "tool_input": { "command": "curl -s https://healthy.example.com/; curl -s https://blocked.example.com/" } },
+      "expect": "deny", "contains": "R4: 2 blocks on blocked.example.com" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-multi", "tool_name": "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+        "tool_input": { "commands": [ { "label": "a", "command": "curl -s https://healthy.example.com/" }, { "label": "b", "command": "curl -s https://blocked.example.com/" } ], "queries": ["x"] } },
+      "expect": "deny", "contains": "R4: 2 blocks on blocked.example.com" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-multi", "tool_name": "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+        "tool_input": { "commands": [ { "label": "a", "command": "firecrawl scrape https://blocked.example.com/" }, { "label": "b", "command": "curl -s https://blocked.example.com/" } ], "queries": ["x"] } },
+      "expect": "deny", "contains": "via \"http\"" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-multi", "tool_name": "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+        "tool_input": { "commands": [ { "label": "a", "command": "firecrawl scrape https://mixed.example.com/" }, { "label": "b", "command": "curl -s https://mixed.example.com/" } ], "queries": ["x"] },
+        "tool_response": "HTTP/1.1 403 Forbidden" },
+      "expect": "silent" }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "description": "agent-browser open <url> then URL-free snapshot calls: the snapshots count against the host that was opened, and R4 then denies another snapshot",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-ab", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --provider browserbase open https://portal.example.org/login" },
+        "tool_response": { "stdout": "Opened Portal Login" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-ab", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --provider browserbase snapshot" },
+        "tool_response": { "stdout": "- heading \"Access Denied\"\n- text: Reference #18.2f3c1702.1730000000.5a1b2c" } },
+      "expect": "context", "contains": "on portal.example.org via \"browser-cloud\", strike 1/2" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-ab", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --provider browserbase eval 'document.title'" },
+        "tool_response": { "stdout": "Access Denied ... Reference #18.2f3c1702.1730000001.5a1b2d" } },
+      "expect": "context", "contains": "Limit reached" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-ab", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --provider browserbase snapshot" } },
+      "expect": "deny", "contains": "R4: 2 blocks on portal.example.org" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "other", "tool_name": "Bash",
+        "tool_input": { "command": "agent-browser --provider browserbase snapshot" } },
+      "expect": "silent" }
+  ]
+}

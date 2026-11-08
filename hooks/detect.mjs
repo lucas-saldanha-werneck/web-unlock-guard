@@ -6,8 +6,8 @@
 const STRONG = [
   // Cloudflare
   [/cf-mitigated:\s*challenge/i, 'cloudflare-challenge', 'cloudflare'],
-  [/Performing security verification|Verify you are human|Widget containing a Cloudflare security challenge/i, 'cloudflare-turnstile', 'cloudflare'],
-  [/challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform\/|__cf_chl_|cf-turnstile|cf_chl_opt/i, 'cloudflare-challenge', 'cloudflare'],
+  [/Performing security verification/i, 'cloudflare-turnstile', 'cloudflare'],
+  [/__cf_chl_|cf_chl_opt/i, 'cloudflare-challenge', 'cloudflare'],
   [/<title>\s*Just a moment\.\.\.\s*<\/title>|(^|\n)\s*Just a moment\.\.\.\s*($|\n)/i, 'cloudflare-js-challenge', 'cloudflare'],
   [/Attention Required!\s*\|\s*Cloudflare|Sorry, you have been blocked/i, 'cloudflare-waf-block', 'cloudflare'],
   [/Enable JavaScript and cookies to continue/i, 'cloudflare-js-challenge', 'cloudflare'],
@@ -21,11 +21,19 @@ const STRONG = [
   [/linkedin\.com\/authwall|\bauthwall\b/i, 'authwall', 'linkedin'],
   // Reader proxies that return the target's error as a page
   [/Warning:\s*Target URL returned error\s*(4\d\d|5\d\d)/i, 'reader-target-error', 'reader'],
-  // Captcha widgets
-  [/g-recaptcha|recaptcha\/api\.js|hcaptcha\.com\/1\/api\.js/i, 'captcha-widget', 'captcha'],
   // Generic denial as a title or heading
   [/<title>\s*Access Denied\s*<\/title>|<h1[^>]*>\s*Access Denied\s*<\/h1>/i, 'access-denied', 'generic'],
   [/(^|\n)HTTP\/[0-9.]+\s+(401|403|406|429|451|503)\b/i, 'http-blocked-status', 'http'],
+  // curl -f prints the status as an error line and no body
+  [/curl: \(22\) The requested URL returned error:?\s*(401|403|406|429|451|503)\b/i, 'http-blocked-status', 'http'],
+];
+// Widget markers: ordinary pages embed these too (a contact form with Turnstile or reCAPTCHA,
+// Cloudflare's bot script). They count only on a thin page: under 600 visible characters of
+// HTML, or under 2000 characters of plain text such as a browser snapshot.
+const WIDGET = [
+  [/Verify you are human|Widget containing a Cloudflare security challenge/i, 'cloudflare-turnstile', 'cloudflare'],
+  [/challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform\/|cf-turnstile/i, 'cloudflare-challenge', 'cloudflare'],
+  [/g-recaptcha|recaptcha\/api\.js|hcaptcha\.com\/1\/api\.js/i, 'captcha-widget', 'captcha'],
 ];
 // Short error pages: only counted when the whole output is small, so docs prose does not trigger it.
 const SHORT_PAGE = /Too Many Requests|Rate limit exceeded|\bForbidden\b|Access Denied|Request blocked|try again later|Service Unavailable/i;
@@ -42,6 +50,13 @@ export function detect(text) {
   for (const [re, reason, vendor] of STRONG) {
     const m = re.exec(t) || (vis && re.exec(vis));
     if (m) return { blocked: true, reason, vendor, match: m[0].slice(0, 80).replace(/\s+/g, ' ') };
+  }
+  const thin = vis !== null ? vis.length < 600 : t.length < 2000;
+  if (thin) {
+    for (const [re, reason, vendor] of WIDGET) {
+      const m = re.exec(t) || (vis && re.exec(vis));
+      if (m) return { blocked: true, reason, vendor, match: m[0].slice(0, 80).replace(/\s+/g, ' ') };
+    }
   }
   // Shell page: lots of HTML, almost no visible text (a JS-rendered block or login page).
   if (vis !== null && t.length > 10000 && vis.length < 600) {

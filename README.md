@@ -1,39 +1,17 @@
 # web-unlock-guard
 
-A Claude Code plugin with hooks that stop Claude from hammering a blocked website with the same
-method. After 2 blocked results on one host and method, the next try with that method is denied
-and Claude is told what to switch to.
-
-## Why
+A Claude Code plugin that stops Claude from retrying a blocked website the same way. After 2
+blocked results on one host with one method, the next try with that method is denied and Claude
+is told what to try instead.
 
 When a site answers with a Cloudflare challenge, a 403 or a captcha, Claude tends to retry the
 same request with small changes: another user agent, another flag, the same headless browser
-again. A rule written in `CLAUDE.md` or a skill doesn't reliably stop that. A hook does, because
-it runs outside the model on every tool call.
-
-## Rules
-
-| Rule | Hook | What it does |
-|---|---|---|
-| R4 | Pre + Post | Reads every web tool result for block signatures (Cloudflare, DataDome, PerimeterX, Kasada, Imperva, Akamai, captcha widgets, 401/403/429/503, empty JS shells). Counts a strike per session, host and method. At 2 strikes, the next call with that method on that host is denied. A clean result resets the count. |
-| R3 | Pre | Denies headless browsers (`--headless`, `headless: true`) against a Cloudflare host. |
-| R1 | Pre | Denies a default automation browser (`agent-browser` without `--auto-connect`/`--cdp`, plain Playwright, Puppeteer, Selenium) against a Cloudflare host. They set `navigator.webdriver=true` and loop on Turnstile. |
-| R2 | Pre | Denies `--remote-debugging-port` without `--user-data-dir`. Chrome 136+ ignores the port on the default profile, silently. |
-
-A host counts as "Cloudflare" when it served a Cloudflare challenge earlier (remembered for 30
-days), or when the optional sites registry tags it `cloudflare`.
-
-Methods are: `http` (curl, wget, fetch, WebFetch), `fetch-render` (r.jina.ai, Firecrawl),
-`fetch-unlock` (Apify, Bright Data, ScraperAPI...), `browser-automation`, `browser-stealth`,
-`browser-real` (your own Chrome via `--auto-connect`, `claude --chrome`, OpenCLI) and
-`browser-cloud`.
-
-To insist anyway, put `WEB_UNLOCK_FORCE=1` in the command. The hooks fail open: any internal
-error lets the tool call through.
+again. A rule in `CLAUDE.md` or a skill doesn't reliably stop that. A hook does, because it runs
+outside the model on every tool call.
 
 ## What Claude sees
 
-After the second blocked `curl`:
+After the second blocked `curl` to the same host, the hook adds this to the tool result:
 
 ```
 web-unlock-guard: BLOCKED cloudflare-js-challenge (cloudflare) on blocked.example.com via "http",
@@ -41,7 +19,7 @@ strike 2/2. Limit reached: the next try with this method will be denied. Switch 
 fetcher (e.g. r.jina.ai or Firecrawl) or a stealth fetcher.
 ```
 
-Then, on a third `wget` to the same host:
+If Claude then tries `wget` on the same host, the call is denied and Claude gets:
 
 ```
 PreToolUse:Bash hook error: web-unlock-guard R4: 2 blocks on blocked.example.com via "http"
@@ -57,58 +35,94 @@ To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 /plugin install web-unlock-guard@web-unlock-guard
 ```
 
-Requires `node` (18+) on `PATH`. The hooks run on `Bash`, `WebFetch` and context-mode's
-`ctx_execute` / `ctx_batch_execute` tools.
+It needs `node` on `PATH` (tested with Node 26). The hooks run on `Bash`, `WebFetch`, and
+context-mode's `ctx_execute`, `ctx_execute_file` and `ctx_batch_execute` tools.
 
 ## Configuration
 
-All optional. Set them in the plugin's options, or as environment variables.
+Everything is optional. Set the options with `/plugin configure web-unlock-guard@web-unlock-guard`,
+or use the environment variables.
 
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
-| `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks before a method is denied for a host. |
+| `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
 | `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty | JSON registry of known hosts (see below). |
-| `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty | Companion skill folder (see Optional requirements). |
-| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, else `~/.claude/state/web-unlock-guard.json` | Strike counter file. Session entries expire after 24 h. |
+| `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty | Your own companion skill folder (see Optional extras). |
+| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `~/.claude/state/web-unlock-guard.json` when that variable isn't set | Strike counter file. Session entries are dropped after 24 hours. |
 
 ### Sites registry
 
 A registry tells the hooks which hosts are behind Cloudflare and which route already worked, so
-Claude goes there instead of rediscovering it. See
+Claude goes there instead of finding it again. From
 [`examples/sites.example.json`](examples/sites.example.json):
 
 ```json
 {
   "hosts": {
     "example-shop.com": {
-      "tags": ["cloudflare"],
+      "tags": ["cloudflare", "logged"],
       "route": "browser-real",
       "how": "agent-browser --auto-connect on your own Chrome profile"
     },
     "shop.example-shop.com": { "alias_of": "example-shop.com" },
-    "*.example-jobs.io": { "tags": ["antibot"], "route": "fetch-unlock", "how": "the site's JSON API" }
+    "*.example-jobs.io": {
+      "tags": ["antibot"],
+      "route": "fetch-unlock",
+      "how": "the site's public JSON API at /api/jobs"
+    }
   }
 }
 ```
 
-A host matches itself, its parent domains and `*.domain` keys. The `route` and `how` are added to
-every message about that host.
+A host matches its own key, its parent domains, and `*.domain` keys (subdomains only). A leading
+`www.` is ignored. The `route` and `how` are added to the R1, R3 and R4 messages and to the
+strike messages for that host.
 
-## Optional requirements
+## Optional extras
 
 None of these are needed. Without them, all four rules work with the bundled detector and no
 registry.
 
-- **A companion web-access skill** (your own, for example one named `web-unlock`). If
-  `skill_dir` is set, or `~/.claude/skills/web-unlock/SKILL.md` exists, the hooks use its
-  `lib/detect.mjs` (exports `detect`, `inferLayer`, `firstHost`, optional `NEXT_LAYER`) instead
-  of the bundled one, and its `sites.json` as the registry when `sites_file` is empty. If its
-  detector fails to load, the bundled one is used. If it has `bin/chrome-real.sh`, that script
-  is suggested when a browser method is blocked.
-- **Scrapling** (`scrapling` CLI). When it's on `PATH`, it's suggested as the next step after
-  `http` or `fetch-render` blocks.
+- **A companion skill folder of your own.** Point `skill_dir` at it. If `skill_dir` is empty and
+  `~/.claude/skills/web-unlock/SKILL.md` exists, that folder is used. The hooks look for three
+  files in it:
+  - `lib/detect.mjs`: replaces the bundled detector. It must export `detect`, `inferLayer` and
+    `firstHost`, and may export `NEXT_LAYER`. If it fails to load or lacks an export, the bundled
+    detector is used.
+  - `sites.json`: used as the registry when `sites_file` is empty.
+  - `bin/chrome-real.sh`: suggested when a `browser-automation` or `browser-stealth` method is
+    blocked.
+- **Scrapling.** When the `scrapling` CLI is on `PATH`, it is suggested after an `http` or
+  `fetch-render` block.
 - **agent-browser, OpenCLI, Firecrawl, r.jina.ai, Apify** and similar tools are only recognized
-  to tell methods apart. Nothing calls them.
+  to tell methods apart. The plugin never calls them.
+
+## How it works
+
+A `PostToolUse` / `PostToolUseFailure` hook reads each web tool result for block signatures:
+Cloudflare, DataDome, PerimeterX, Kasada, Imperva, Akamai, captcha widgets, LinkedIn's authwall,
+HTTP 401/403/406/429/451/503, short error pages and near-empty JavaScript shells. Each block
+counts a strike per session, host and method. A clean result resets the count for that method.
+A `PreToolUse` hook then applies four rules:
+
+| Rule | What it denies |
+|---|---|
+| R4 | Any call with a method that already reached `max_strikes` blocks on that host. |
+| R3 | Headless browsers (`--headless`, `headless: true`) against a Cloudflare host. |
+| R1 | A default automation browser (`agent-browser` without `--auto-connect` or `--cdp`, plain Playwright, Puppeteer, Selenium) against a Cloudflare host. These set `navigator.webdriver=true` and loop on Turnstile. |
+| R2 | `--remote-debugging-port` without `--user-data-dir`, on any host, because Chrome 136+ silently ignores the port on the default profile. Commands that contain `agent-browser` are exempt. |
+
+A host counts as Cloudflare when it served a Cloudflare challenge earlier (remembered for 30
+days) or when the sites registry tags it `cloudflare`.
+
+The methods are `http` (curl, wget, httpx, requests, fetch, WebFetch), `fetch-render` (r.jina.ai,
+Firecrawl), `fetch-unlock` (Apify, Bright Data, ScraperAPI, ZenRows, Scrapfly),
+`browser-automation`, `browser-stealth` (Patchright, Camoufox, nodriver, Scrapling),
+`browser-real` (your own Chrome via `agent-browser --auto-connect`, `claude --chrome`, OpenCLI)
+and `browser-cloud`.
+
+To skip every check for one call, put `WEB_UNLOCK_FORCE=1` in the command. The hooks fail open:
+bad input or an internal error lets the tool call through.
 
 ## Tests
 
@@ -116,8 +130,9 @@ registry.
 node tests/run.mjs
 ```
 
-Feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per rule,
-with an empty temporary `HOME`, plus fail-open and companion-skill checks.
+This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
+rule, with an empty temporary `HOME`. It also checks fail-open behavior and the companion skill
+folder.
 
 ## Uninstall
 
@@ -126,9 +141,20 @@ with an empty temporary `HOME`, plus fail-open and companion-skill checks.
 /plugin marketplace remove web-unlock-guard
 ```
 
-Then delete the strike file if you like (`~/.claude/state/web-unlock-guard.json` or the plugin
-data folder).
+Uninstalling deletes the plugin data folder, which holds the strike file. If you ran the hook
+outside the plugin system, delete `~/.claude/state/web-unlock-guard.json` yourself.
+
+## Limits
+
+- Tested on macOS with Claude Code 2.1.319 in the terminal. A real `claude -p` session confirmed
+  the plugin loads and R2 denies the call with the message above. The strike rules (R4, R3) were
+  tested with the sample hook input in `tests/`, not against a live blocked site.
+- Not tested in the desktop app, on Linux or on Windows.
+- Detection works on text patterns. A block page it doesn't know won't count as a strike, and a
+  page that quotes a block signature can count as one.
 
 ## License
 
-MIT. Built with Claude Code
+MIT
+
+Built with Claude Code

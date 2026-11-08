@@ -26,13 +26,13 @@
     "sites_file": {
       "type": "string",
       "title": "Sites registry (optional)",
-      "description": "JSON file with known hosts: tags such as cloudflare, and the route that worked. Empty = ~/.config/web-unlock/sites.json if it exists, else the companion skill's sites.json.",
+      "description": "JSON file with known hosts: tags such as cloudflare, and the route that worked. Laid over the companion skill's bundled sites.json (same host = yours wins). Empty = ~/.config/web-unlock/sites.json.",
       "default": ""
     },
     "skill_dir": {
       "type": "string",
       "title": "Companion skill folder (optional)",
-      "description": "Folder of your own web-access skill. If it has lib/detect.mjs, its detector is used; if it has sites.json, that is the registry. Empty = ~/.claude/skills/web-unlock if it exists, else the installed web-unlock plugin's skill.",
+      "description": "Folder of your own web-access skill. If it has lib/detect.mjs, its detector is used; if it has sites.json, that is the bundled registry under yours. Empty = ~/.claude/skills/web-unlock if it exists, else the installed web-unlock plugin's skill.",
       "default": ""
     },
     "rules_file": {

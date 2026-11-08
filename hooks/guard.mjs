@@ -107,8 +107,9 @@ function seedRules(file) {
 }
 
 // The rest, resolved only for web commands (or when a rule message needs {skill_dir}).
-// Explicit settings beat defaults: sites_file, then an explicitly set skill_dir's sites.json, then the
-// web-unlock user folder's sites.json, then the sites.json of a companion found on its own.
+// Registry = an overlay, read the same way as the web-unlock skill (its lib/sites.py): the companion skill's
+// bundled sites.json first (skill_dir, else the companion found on its own), then your registry on top
+// (sites_file, else the web-unlock user folder's sites.json). Same host = your whole entry wins.
 function config(cwd) {
   const max = parseInt(setting('CLAUDE_PLUGIN_OPTION_MAX_STRIKES', 'WEB_UNLOCK_GUARD_MAX_STRIKES'), 10);
   const explicitSkill = expand(setting('CLAUDE_PLUGIN_OPTION_SKILL_DIR', 'WEB_UNLOCK_GUARD_SKILL_DIR'));
@@ -117,12 +118,11 @@ function config(cwd) {
   const skillSites = skillDir && path.join(skillDir, 'sites.json');
   const userSites = path.join(expand(setting('WEB_UNLOCK_HOME')) || path.join(HOME, '.config', 'web-unlock'), 'sites.json');
   let sitesFile = expand(setting('CLAUDE_PLUGIN_OPTION_SITES_FILE', 'WEB_UNLOCK_GUARD_SITES'));
-  if (!sitesFile && explicitSkill && skillSites && fs.existsSync(skillSites)) sitesFile = skillSites;
   if (!sitesFile && fs.existsSync(userSites)) sitesFile = userSites;
-  if (!sitesFile && skillSites && fs.existsSync(skillSites)) sitesFile = skillSites;
+  const bundledSites = skillSites && fs.existsSync(skillSites) && skillSites !== sitesFile ? skillSites : '';
   const dataDir = process.env.CLAUDE_PLUGIN_DATA || path.join(claudeDirs()[0], 'state');
   const stateFile = expand(setting('WEB_UNLOCK_GUARD_STATE')) || path.join(dataDir, 'web-unlock-guard.json');
-  return { maxStrikes: max > 0 ? max : 2, skillDir, sitesFile, stateFile };
+  return { maxStrikes: max > 0 ? max : 2, skillDir, sitesFile, bundledSites, stateFile };
 }
 
 // Your own rules file: { "webish": ["word", ...], "deny": [{ "name", "pattern", "flags", "unless", "tools", "message" }] }.
@@ -287,6 +287,21 @@ function targetHost(firstHost, s) {
   return firstHost(/^https?:/i.test(m[1]) ? m[1] : 'https://' + m[1]) || h;
 }
 
+// The hosts of one registry file: its "hosts" object (or the whole object, for a file without one), minus
+// "_" notes. Missing or unreadable = none. Same rule as the web-unlock skill's lib/sites.py.
+function hostsOf(file) {
+  const d = file ? loadJSON(file) : null;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return {};
+  const h = d.hosts && typeof d.hosts === 'object' && !Array.isArray(d.hosts) ? d.hosts : d;
+  return Object.fromEntries(Object.entries(h).filter(([k]) => !k.startsWith('_')));
+}
+
+// The merged registry: bundled hosts first, then yours on top (same key = your entry, whole). null if no file.
+function loadSites(cfg) {
+  if (!cfg.sitesFile && !cfg.bundledSites) return null;
+  return { hosts: { ...hostsOf(cfg.bundledSites), ...hostsOf(cfg.sitesFile) } };
+}
+
 // Registry lookup: { "hosts": { "example.com": { tags, route, how, alias_of } } }.
 // Matches the host, its parent domains, and "*.domain" keys.
 function siteInfo(sites, host) {
@@ -350,7 +365,7 @@ async function main(hook) {
   if (!WEBISH.test(cmd) && !isFetch) return;
   getCfg();
   const { detect, inferLayer, NEXT_LAYER, firstHost } = await loadDetector(cfg);
-  const sites = cfg.sitesFile ? loadJSON(cfg.sitesFile) : null;
+  const sites = loadSites(cfg);
   // WebFetch is the http method whatever words its URL contains; through r.jina.ai it is fetch-render.
   const fetchLayer = s => (/r\.jina\.ai/i.test(s) ? 'fetch-render' : 'http');
   const wholeLayer = isFetch ? fetchLayer(cmd) : layerOf(cmd);

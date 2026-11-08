@@ -46,7 +46,7 @@ or use the environment variables.
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
 | `max_strikes` | `WEB_UNLOCK_GUARD_MAX_STRIKES` | `2` | Blocks on one host and method before that method is denied. |
-| `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty: the `sites.json` of a `skill_dir` you set, else `~/.config/web-unlock/sites.json` (or `$WEB_UNLOCK_HOME/sites.json`), else the `sites.json` of a companion found on its own | JSON registry of known hosts (see below). A setting you made always beats a default. |
+| `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty: `~/.config/web-unlock/sites.json` (or `$WEB_UNLOCK_HOME/sites.json`) | Your JSON registry of known hosts (see below). It is laid over the companion skill's bundled `sites.json`, the same way the web-unlock skill reads it: bundled hosts first, then yours; a host in both is your entry, whole. |
 | `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty: `skills/web-unlock` in `$CLAUDE_CONFIG_DIR` or `~/.claude`, else the installed web-unlock plugin | Your own companion skill folder (see Optional extras). |
 | `rules_file` | `WEB_UNLOCK_GUARD_RULES` | empty: `~/.config/web-unlock-guard/rules.json` (created on first run) | Your own deny rules and extra tool names (see below). |
 | | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `state/web-unlock-guard.json` under `$CLAUDE_CONFIG_DIR` (else `~/.claude`) when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
@@ -160,8 +160,8 @@ registry.
   - `lib/detect.mjs`: replaces the bundled detector. It must export `detect`, `inferLayer` and
     `firstHost`, and may export `NEXT_LAYER`. If it fails to load or lacks an export, the bundled
     detector is used.
-  - `sites.json`: used as the registry when `sites_file` is empty and there is no
-    `~/.config/web-unlock/sites.json` (the web-unlock skill's own user registry).
+  - `sites.json`: the bundled registry. Your registry (`sites_file`, else
+    `~/.config/web-unlock/sites.json`) is laid on top of it: same host = your entry wins.
   - `bin/chrome-real.sh`: suggested when a `browser-automation` or `browser-stealth` method is
     blocked.
 - **Scrapling.** When the `scrapling` CLI is on `PATH`, it is suggested after an `http` or

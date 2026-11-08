@@ -263,14 +263,16 @@ for (const k of ['existsSync', 'readFileSync', 'statSync']) { const f = fs[k]; f
   console.log(`${okLazy ? 'PASS' : 'FAIL'}  non-web command: only the rules file is read (no companion or registry lookup)  -> ${seen.split('\n').filter(Boolean).map(x => path.basename(x)).join(',').slice(0, 160)}`);
 }
 {
-  // 2: an explicitly set skill_dir's sites.json beats the default ~/.config/web-unlock/sites.json
+  // 2: an explicitly set skill_dir's sites.json is the bundled layer; ~/.config/web-unlock/sites.json lies on top
   const { home, env } = sandbox({ WEB_UNLOCK_GUARD_SKILL_DIR: '${HOME}/myskill' });
   fs.mkdirSync(path.join(home, 'myskill'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'myskill', 'sites.json'), JSON.stringify({ hosts: { 'pick.example.com': { route: 'explicit-skill-route' } } }));
+  fs.writeFileSync(path.join(home, 'myskill', 'sites.json'), JSON.stringify({ hosts: { 'pick.example.com': { route: 'explicit-skill-route' }, 'only-skill.example.com': { route: 'explicit-skill-route' } } }));
   fs.mkdirSync(path.join(home, '.config', 'web-unlock'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'web-unlock', 'sites.json'), JSON.stringify({ hosts: { 'pick.example.com': { route: 'default-route' } } }));
   const post = { hook_event_name: 'PostToolUse', session_id: 's-pick', tool_name: 'Bash', tool_input: { command: 'curl -s https://pick.example.com/' }, tool_response: { stdout: 'HTTP/1.1 403 Forbidden' } };
-  check('explicit skill_dir registry wins over the default user registry', run(env, JSON.stringify(post)), 'context', 'explicit-skill-route');
+  check('same host in the skill_dir registry and yours: yours wins', run(env, JSON.stringify(post)), 'context', 'default-route');
+  const post2 = { ...post, session_id: 's-pick2', tool_input: { command: 'curl -s https://only-skill.example.com/' } };
+  check('a host only in the skill_dir registry is still used', run(env, JSON.stringify(post2)), 'context', 'explicit-skill-route');
 }
 {
   // 7: CLAUDE_CONFIG_DIR first, then ~/.claude, for the companion and for the state folder
@@ -311,6 +313,38 @@ for (const k of ['existsSync', 'readFileSync', 'statSync']) { const f = fs[k]; f
     { scope: 'project', projectPath: proj, installPath: mk('0.3.0', 'this-project'), version: '0.3.0' },
   ]);
   check('install for the current project beats user scope', run(env, post('s-v2', path.join(proj, 'sub'))), 'context', 'this-project');
+}
+
+// 9b. Registry overlay, read the same way as the web-unlock skill: the companion's bundled sites.json first,
+// then yours (~/.config/web-unlock/sites.json) on top; same host = your whole entry.
+console.log('\n# registry overlay');
+{
+  const { home, env } = sandbox();
+  const skill = path.join(home, '.claude', 'skills', 'web-unlock');
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# web-unlock\n');
+  const bundled = { hosts: { 'b-only.example.com': { route: 'bundled-route' }, 'both.example.com': { route: 'bundled-route', how: 'bundled-how' } } };
+  fs.writeFileSync(path.join(skill, 'sites.json'), JSON.stringify(bundled));
+  fs.mkdirSync(path.join(home, '.config', 'web-unlock'), { recursive: true });
+  const mine = path.join(home, '.config', 'web-unlock', 'sites.json');
+  fs.writeFileSync(mine, JSON.stringify({ _doc: 'x', hosts: { 'u-only.example.com': { route: 'user-route' }, 'both.example.com': { route: 'user-route' } } }));
+  let n = 0;
+  const blocked = host => JSON.stringify({ hook_event_name: 'PostToolUse', session_id: `s-ov-${n++}`, tool_name: 'Bash', tool_input: { command: `curl -s https://${host}/` }, tool_response: { stdout: 'HTTP/1.1 403 Forbidden' } });
+  check('overlay: a host only in your registry is used', run(env, blocked('u-only.example.com')), 'context', 'user-route');
+  check('overlay: a host only in the bundled registry is used', run(env, blocked('b-only.example.com')), 'context', 'bundled-route');
+  const both = run(env, blocked('both.example.com'));
+  check('overlay: same host in both -> your entry wins', both, 'context', 'user-route');
+  const t = (both.parsed && both.parsed.hookSpecificOutput && both.parsed.hookSpecificOutput.additionalContext) || '';
+  const whole = !t.includes('bundled-how');
+  if (whole) pass++; else fail++;
+  console.log(`${whole ? 'PASS' : 'FAIL'}  overlay: your entry replaces the bundled one whole (no bundled fields mixed in)`);
+  // a seeded (empty) registry: a host the next skill version adds to the bundled file reaches you
+  fs.writeFileSync(mine, JSON.stringify({ _doc: 'x', hosts: {} }));
+  fs.writeFileSync(path.join(skill, 'sites.json'), JSON.stringify({ hosts: { 'new-in-update.example.com': { route: 'update-route' } } }));
+  check('overlay: a bundled update reaches a seeded (empty) registry', run(env, blocked('new-in-update.example.com')), 'context', 'update-route');
+  // an old full copy of the bundled registry still works: it overrides every host it lists
+  fs.writeFileSync(mine, JSON.stringify({ hosts: { 'new-in-update.example.com': { route: 'copy-route' } } }));
+  check('overlay: a full copy still works and wins for the hosts it lists', run(env, blocked('new-in-update.example.com')), 'context', 'copy-route');
 }
 
 // 10. First run: the rules file is created where the guard reads it, never overwritten, never a crash

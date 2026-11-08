@@ -148,7 +148,7 @@ node tests/run.mjs
 ```
 
 This feeds the sample hook JSON in [`tests/fixtures/`](tests/fixtures) to the hook, one file per
-rule or case, with an empty temporary `HOME`. It also checks fail-open behavior, the companion
+rule or case, with an empty temporary home folder. It also checks fail-open behavior, the companion
 skill folder, expiry of old entries, and parallel hooks writing the strike file at once.
 
 ## Uninstall
@@ -166,7 +166,8 @@ outside the plugin system, delete `~/.claude/state/web-unlock-guard.json` yourse
 - Tested on macOS with Claude Code 2.1.319 in the terminal. A real `claude -p` session confirmed
   the plugin loads and R2 denies the call with the message above. The strike rules (R4, R3) were
   tested with the sample hook input in `tests/`, not against a live blocked site.
-- Not tested in the desktop app, on Linux or on Windows.
+- The test suite runs on Linux, macOS and Windows in GitHub Actions. The plugin was not tried in
+  a live Claude Code session on Linux or Windows, or in the desktop app.
 - Detection works on text patterns. A block page it doesn't know won't count as a strike, and a
   page that quotes a block signature can count as one.
 - A batch or compound command with several hosts never adds strikes. Repeating a blocked request

@@ -15,7 +15,8 @@ let pass = 0, fail = 0;
 
 function sandbox(extraEnv = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wug-'));
-  const env = { PATH: process.env.PATH, HOME: home, WEB_UNLOCK_GUARD_STATE: path.join(home, 'state.json') };
+  // os.homedir() reads USERPROFILE on Windows and HOME elsewhere, so set both.
+  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, WEB_UNLOCK_GUARD_STATE: path.join(home, 'state.json') };
   for (const [k, v] of Object.entries(extraEnv)) env[k] = v.replaceAll('${ROOT}', ROOT).replaceAll('${HOME}', home);
   return { home, env };
 }

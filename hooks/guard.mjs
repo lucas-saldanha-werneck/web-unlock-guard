@@ -30,7 +30,7 @@ function setting(...names) {
   for (const n of names) { const v = (process.env[n] || '').trim(); if (v) return v; }
   return '';
 }
-const expand = p => (p ? p.replace(/^~(?=$|\/)/, HOME).replace(/\$HOME|\$\{HOME\}/g, HOME) : p);
+const expand = p => (p ? p.replace(/^~(?=$|[\\/])/, HOME).replace(/\$HOME|\$\{HOME\}/g, HOME) : p);
 
 function config() {
   const max = parseInt(setting('CLAUDE_PLUGIN_OPTION_MAX_STRIKES', 'WEB_UNLOCK_GUARD_MAX_STRIKES'), 10);
@@ -105,7 +105,19 @@ function respText(tr) {
   return String(tr);
 }
 
-function loadJSON(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; } }
+// On Windows, reading or replacing a file that another process is renaming at the same moment
+// fails for a short time with EPERM, EACCES or EBUSY. Retry those for up to a second.
+const TRANSIENT = new Set(['EPERM', 'EACCES', 'EBUSY']);
+function retry(fn) {
+  const until = Date.now() + 1000;
+  for (;;) {
+    try { return fn(); } catch (e) {
+      if (!TRANSIENT.has(e.code) || Date.now() > until) throw e;
+      sleep(5 + Math.random() * 10);
+    }
+  }
+}
+function loadJSON(f) { try { return JSON.parse(retry(() => fs.readFileSync(f, 'utf8'))); } catch (_) { return null; } }
 // Drop sessions idle for 24 hours and Cloudflare marks older than 30 days. Runs on every load,
 // so expired entries never reach a rule.
 function prune(s) {
@@ -140,7 +152,7 @@ function updateState(file, fn) {
     if (!fn(s)) return;
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(s, null, 1));
-    fs.renameSync(tmp, file);
+    try { retry(() => fs.renameSync(tmp, file)); } catch (e) { try { fs.unlinkSync(tmp); } catch (_) {} throw e; }
   } finally {
     if (fd !== null) { fs.closeSync(fd); try { fs.unlinkSync(lock); } catch (_) {} }
   }

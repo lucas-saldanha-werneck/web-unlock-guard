@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const GUARD = path.join(ROOT, 'hooks', 'guard.mjs');
@@ -177,11 +177,11 @@ console.log('\n# rules file');
   check('{skill_dir} in the message becomes the companion folder', run(env, pre('curl http://127.0.0.1:9223/json/new')), 'deny', `${sk}/bin/chrome-real.sh`);
   // Option / env var path wins; a missing or broken file is ignored
   const other = sandbox({ WEB_UNLOCK_GUARD_RULES: '${HOME}/my-rules.json' });
-  fs.writeFileSync(path.join(other.home, 'my-rules.json'), JSON.stringify({ deny: [{ name: 'from-option', pattern: 'forbidden-word', message: 'no' }] }));
-  check('rules_file option (CLAUDE_PLUGIN_OPTION_RULES_FILE / WEB_UNLOCK_GUARD_RULES) is read', run(other.env, pre('echo forbidden-word')), 'deny', 'from-option');
+  fs.writeFileSync(path.join(other.home, 'my-rules.json'), JSON.stringify({ deny: [{ name: 'from-option', pattern: 'forbidden-tool', message: 'no' }] }));
+  check('rules_file option (CLAUDE_PLUGIN_OPTION_RULES_FILE / WEB_UNLOCK_GUARD_RULES) is read', run(other.env, pre('forbidden-tool --now')), 'deny', 'from-option');
   const viaOpt = sandbox({ CLAUDE_PLUGIN_OPTION_RULES_FILE: '${HOME}/my-rules.json' });
-  fs.writeFileSync(path.join(viaOpt.home, 'my-rules.json'), JSON.stringify({ deny: [{ name: 'plugin-opt', pattern: 'forbidden-word', message: 'no' }] }));
-  check('plugin option form works', run(viaOpt.env, pre('echo forbidden-word')), 'deny', 'plugin-opt');
+  fs.writeFileSync(path.join(viaOpt.home, 'my-rules.json'), JSON.stringify({ deny: [{ name: 'plugin-opt', pattern: 'forbidden-tool', message: 'no' }] }));
+  check('plugin option form works', run(viaOpt.env, pre('forbidden-tool --now')), 'deny', 'plugin-opt');
   const bad = sandbox({ WEB_UNLOCK_GUARD_RULES: '${HOME}/bad.json' });
   fs.writeFileSync(path.join(bad.home, 'bad.json'), '{not json');
   check('broken rules file: built-in rules still work', run(bad.env, pre('chrome --remote-debugging-port=9333 https://example.org')), 'deny', 'R2');
@@ -213,6 +213,104 @@ export const firstHost = s => { const m = /https?:\\/\\/([a-z0-9.-]+)/i.exec(s |
   fs.mkdirSync(path.join(wh.home, 'wu'), { recursive: true });
   fs.writeFileSync(path.join(wh.home, 'wu', 'sites.json'), JSON.stringify({ hosts: { 'cf.example.com': { tags: ['cloudflare'] } } }));
   check('WEB_UNLOCK_HOME moves the user registry', run(wh.env, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's-wh', tool_name: 'Bash', tool_input: { command: 'agent-browser open https://cf.example.com/' } })), 'deny', 'R1');
+}
+
+// 9. Review fixes
+console.log('\n# review fixes');
+{
+  const J = '/json/' + 'new';
+  const ex = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'rules.example.json'), 'utf8'));
+  const pre = (c, sid = 's-rv') => JSON.stringify({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Bash', tool_input: { command: c }, cwd: '/tmp' });
+  const withRules = (rules, extra = {}) => {
+    const sb = sandbox(extra);
+    fs.mkdirSync(path.join(sb.home, '.config', 'web-unlock-guard'), { recursive: true });
+    fs.writeFileSync(path.join(sb.home, '.config', 'web-unlock-guard', 'rules.json'), JSON.stringify(rules));
+    return sb;
+  };
+  const { env } = withRules(ex);
+  // 1: "unless" is checked on the same segment as the pattern
+  check('unless in another segment does not excuse the match', run(env, pre(`open -g ~/x.txt; osascript -e 'activate application "Google Chrome Beta"'`)), 'deny', 'automation-chrome-stays-behind');
+  // 4: -g anywhere in the open command
+  check('open -a "Google Chrome Beta" -g <url> is allowed', run(env, pre('open -a "Google Chrome Beta" -g https://a.example')), 'silent');
+  check('open -n -a "Google Chrome Beta" is denied', run(env, pre('open -n -a "Google Chrome Beta" https://a.example')), 'deny', 'automation-chrome-stays-behind');
+  // 5: escaped quotes, as an osascript call inside double quotes is written
+  check('escaped-quote osascript form is denied', run(env, pre('osascript -e "tell application \\"Google Chrome Beta\\" to activate"')), 'deny', 'automation-chrome-stays-behind');
+  // 6: searching for a pattern or naming it in a commit message is not denied; running it is
+  check(`grep for ${J} is not denied`, run(env, pre(`grep -rn '${J}' hooks/`)), 'silent');
+  check('a commit message that names it is not denied', run(env, pre(`git commit -m "deny ${J} in rules"`)), 'silent');
+  check(`curl to ${J} after a grep is still denied`, run(env, pre(`grep -q x f && curl -s "http://127.0.0.1:9223${J}?https://a.example"`)), 'deny', 'no-json-new');
+  // 9: webish words match whole words only; unknown layers are rejected
+  const w = withRules({ webish: [{ word: 'mcp', layer: 'http' }, { word: 'oddtool', layer: 'not-a-layer' }] });
+  const post = c => JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's-w', tool_name: 'Bash', tool_input: { command: c }, tool_response: { stdout: '<title>Just a moment...</title> https://w.example.com/' } });
+  check('"mcp" does not match inside "mcporter"', run(w.env, post('mcporter call x w.example.com')), 'silent');
+  check('"mcp" as a word still counts', run(w.env, post('mcp get w.example.com')), 'context', 'via "http"');
+  const bad = spawnSync(process.execPath, [GUARD], { input: post('oddtool get w.example.com'), env: w.env, encoding: 'utf8' });
+  const okBad = bad.status === 0 && !bad.stdout && /unknown layer "not-a-layer"/.test(bad.stderr);
+  if (okBad) pass++; else fail++;
+  console.log(`${okBad ? 'PASS' : 'FAIL'}  unknown layer: entry ignored with a warning on stderr  -> ${JSON.stringify(bad.stderr).slice(0, 100)}`);
+  // 3: no rules file and a non-web command: nothing else is read (a broken skill dir would not matter anyway),
+  // and with a rules file the companion is resolved only for {skill_dir}
+  // A preloaded module logs every file the hook checks or reads.
+  const lz = withRules({ deny: [{ name: 'other', pattern: 'never-matches-this', message: 'no skill dir here' }] });
+  const preload = path.join(lz.home, 'trace.mjs'), log = path.join(lz.home, 'trace.log');
+  fs.writeFileSync(preload, `import fs from 'node:fs';
+const log = ${JSON.stringify(log)};
+for (const k of ['existsSync', 'readFileSync', 'statSync']) { const f = fs[k]; fs[k] = function (p, ...a) { try { fs.appendFileSync(log, String(p) + '\\n'); } catch (_) {} return f.call(this, p, ...a); }; }`);
+  const tr = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, GUARD], { input: pre('ls -la'), env: lz.env, encoding: 'utf8' });
+  const seen = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+  const okLazy = tr.status === 0 && !tr.stdout && !/installed_plugins|skills[\\/]web-unlock|sites\.json/.test(seen) && /rules\.json/.test(seen);
+  if (okLazy) pass++; else fail++;
+  console.log(`${okLazy ? 'PASS' : 'FAIL'}  non-web command: only the rules file is read (no companion or registry lookup)  -> ${seen.split('\n').filter(Boolean).map(x => path.basename(x)).join(',').slice(0, 160)}`);
+}
+{
+  // 2: an explicitly set skill_dir's sites.json beats the default ~/.config/web-unlock/sites.json
+  const { home, env } = sandbox({ WEB_UNLOCK_GUARD_SKILL_DIR: '${HOME}/myskill' });
+  fs.mkdirSync(path.join(home, 'myskill'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'myskill', 'sites.json'), JSON.stringify({ hosts: { 'pick.example.com': { route: 'explicit-skill-route' } } }));
+  fs.mkdirSync(path.join(home, '.config', 'web-unlock'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'web-unlock', 'sites.json'), JSON.stringify({ hosts: { 'pick.example.com': { route: 'default-route' } } }));
+  const post = { hook_event_name: 'PostToolUse', session_id: 's-pick', tool_name: 'Bash', tool_input: { command: 'curl -s https://pick.example.com/' }, tool_response: { stdout: 'HTTP/1.1 403 Forbidden' } };
+  check('explicit skill_dir registry wins over the default user registry', run(env, JSON.stringify(post)), 'context', 'explicit-skill-route');
+}
+{
+  // 7: CLAUDE_CONFIG_DIR first, then ~/.claude, for the companion and for the state folder
+  const { home, env } = sandbox({ CLAUDE_CONFIG_DIR: '${HOME}/cc' });
+  delete env.WEB_UNLOCK_GUARD_STATE;
+  const sk = path.join(home, '.claude', 'skills', 'web-unlock');
+  fs.mkdirSync(sk, { recursive: true }); fs.writeFileSync(path.join(sk, 'SKILL.md'), '---\nname: web-unlock\n---\n');
+  fs.writeFileSync(path.join(sk, 'sites.json'), JSON.stringify({ hosts: { 'cc.example.com': { route: 'home-claude-route' } } }));
+  const post = { hook_event_name: 'PostToolUse', session_id: 's-cc', tool_name: 'Bash', tool_input: { command: 'curl -s https://cc.example.com/' }, tool_response: { stdout: 'HTTP/1.1 403 Forbidden' } };
+  check('companion in ~/.claude is still found when CLAUDE_CONFIG_DIR is set', run(env, JSON.stringify(post)), 'context', 'home-claude-route');
+  const st = fs.existsSync(path.join(home, 'cc', 'state', 'web-unlock-guard.json'));
+  if (st) pass++; else fail++;
+  console.log(`${st ? 'PASS' : 'FAIL'}  state file goes under CLAUDE_CONFIG_DIR when it is set`);
+}
+{
+  // 8: plugin installs: other projects are ignored, a matching project beats user scope, newest version wins
+  const { home, env } = sandbox();
+  const mk = (ver, route) => {
+    const inst = path.join(home, 'cache', 'web-unlock', ver);
+    fs.mkdirSync(path.join(inst, 'skills', 'web-unlock'), { recursive: true });
+    fs.writeFileSync(path.join(inst, 'skills', 'web-unlock', 'SKILL.md'), '---\nname: web-unlock\n---\n');
+    fs.writeFileSync(path.join(inst, 'skills', 'web-unlock', 'sites.json'), JSON.stringify({ hosts: { 'v.example.com': { route } } }));
+    return inst;
+  };
+  const proj = path.join(home, 'proj');
+  fs.mkdirSync(proj, { recursive: true });
+  const write = entries => { fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'web-unlock@mk': entries } })); };
+  write([
+    { scope: 'project', projectPath: path.join(home, 'other'), installPath: mk('0.9.0', 'other-project'), version: '0.9.0' },
+    { scope: 'user', installPath: mk('0.2.0', 'user-0.2.0'), version: '0.2.0' },
+    { scope: 'user', installPath: mk('0.10.0', 'user-0.10.0'), version: '0.10.0' },
+  ]);
+  const post = (sid, cwd) => JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sid, cwd, tool_name: 'Bash', tool_input: { command: 'curl -s https://v.example.com/' }, tool_response: { stdout: 'HTTP/1.1 403 Forbidden' } });
+  check('user scope, newest version (0.10.0 over 0.2.0), other project ignored', run(env, post('s-v1', home)), 'context', 'user-0.10.0');
+  write([
+    { scope: 'user', installPath: mk('0.10.0', 'user-0.10.0'), version: '0.10.0' },
+    { scope: 'project', projectPath: proj, installPath: mk('0.3.0', 'this-project'), version: '0.3.0' },
+  ]);
+  check('install for the current project beats user scope', run(env, post('s-v2', path.join(proj, 'sub'))), 'context', 'this-project');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

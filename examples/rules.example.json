@@ -1,6 +1,9 @@
 {
   "webish": [
-    { "word": "mcporter", "layer": "fetch-render" },
+    {
+      "word": "mcporter",
+      "layer": "fetch-render"
+    },
     "my-scraper-cli"
   ],
   "deny": [
@@ -11,8 +14,8 @@
     },
     {
       "name": "automation-chrome-stays-behind",
-      "pattern": "activate application \"Google Chrome Beta\"|Google Chrome Beta\"?\\s*(to\\s+)?activate|open\\s+(-[a-zA-Z]+\\s+)*-a\\s+[\"']?(/Applications/)?Google Chrome Beta",
-      "unless": "open\\s+(-[a-zA-Z]*g[a-zA-Z]*\\s+)",
+      "pattern": "Google Chrome Beta\\\\?\"?\\s*(to\\s+)?activate|activate\\s+application\\s+\\\\?\"Google Chrome Beta|\\bopen\\s+(-[a-zA-Z]+\\s+)*-a\\s+\\\\?[\"\\']?(\\/Applications\\/)?Google Chrome Beta|\\bopen\\s+(-[a-zA-Z]+\\s+)*-b\\s+com\\.google\\.Chrome\\.beta",
+      "unless": "\\bopen\\b.*\\s-[a-zA-Z]*g[a-zA-Z]*(\\s|$)",
       "message": "Do not bring the automation Chrome to the front by hand. To sign in once: {skill_dir}/bin/chrome-real.sh login \"<url>\"; to work: chrome-real.sh start \"<url>\" (stays behind)."
     }
   ]

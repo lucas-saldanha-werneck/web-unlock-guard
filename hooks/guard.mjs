@@ -7,8 +7,10 @@
 //   Pre  R2: deny --remote-debugging-port without --user-data-dir (recent Chrome ignores it).
 //   Pre  R3: deny headless browsers against a Cloudflare host.
 //   Pre  R4: deny the next try on the same host + method after N blocks (default 2): switch method.
+//   Every host in a compound command or batch is checked before it runs.
 //   Post   : detect a block signature in the tool output, count a strike per host + method,
-//            and remember hosts that served a Cloudflare challenge.
+//            and remember hosts that served a Cloudflare challenge. A call that reaches several
+//            hosts or methods counts nothing, because its output cannot be tied to one of them.
 //
 // Fails open: any internal error exits 0 with no output. Put WEB_UNLOCK_FORCE=1 in the command
 // to skip every check for that call.
@@ -89,6 +91,11 @@ function cmdText(ti) {
   if (typeof ti.url === 'string') return ti.url;
   if (Array.isArray(ti.commands)) return ti.commands.map(c => c && c.command).filter(Boolean).join('\n');
   return '';
+}
+// Split a call into its requests: batch entries, then lines, `;`, `&&`, `||` and `|`.
+function segments(ti, cmd) {
+  const parts = ti && Array.isArray(ti.commands) ? ti.commands.map(c => c && c.command).filter(c => typeof c === 'string') : [cmd];
+  return parts.flatMap(p => p.split(/\n|;|&&|\|\|?/)).map(x => x.trim()).filter(Boolean);
 }
 function respText(tr) {
   if (tr == null) return '';
@@ -178,39 +185,57 @@ async function main(hook) {
   const cfg = config();
   const { detect, inferLayer, NEXT_LAYER, firstHost } = await loadDetector(cfg);
   const sites = cfg.sitesFile ? loadJSON(cfg.sitesFile) : null;
-  const layer = inferLayer(cmd) || (isFetch ? 'http' : null);
+  // WebFetch is the http method whatever words its URL contains; through r.jina.ai it is fetch-render.
+  const fetchLayer = s => (/r\.jina\.ai/i.test(s) ? 'fetch-render' : 'http');
+  const wholeLayer = isFetch ? fetchLayer(cmd) : inferLayer(cmd);
   const state = loadState(cfg.stateFile);
   const sid = hook.session_id || 'nosession';
   const sess = state[sid] || {};
-  // Browser follow-ups (snapshot, eval, click) carry no URL: they act on the page the session last opened.
-  const isBrowser = /^browser-/.test(layer || '');
-  const cmdHost = targetHost(firstHost, cmd);
-  const host = cmdHost ||
-    (isBrowser && sess._last && sess._last[layer]) ||
-    (ev !== 'PreToolUse' ? targetHost(firstHost, respText(hook.tool_response)) : null);
-  const info = siteInfo(sites, host);
-  const seenCf = host && state._cloudflare && state._cloudflare[host];
-  const cloudflare = (info && Array.isArray(info.tags) && info.tags.includes('cloudflare')) || !!seenCf;
-  const cfWhy = info && Array.isArray(info.tags) && info.tags.includes('cloudflare') ? 'is tagged [cloudflare] in the sites registry' : 'served a Cloudflare challenge earlier';
-  const known = info && info.route ? ` Known working route for ${info.host}: ${info.route}${info.how ? ' (' + info.how + ')' : ''}.` : '';
+  // One target (host + method) per request in the call: each shell segment, line or batch entry.
+  const targets = [];
+  for (const seg of isFetch ? [cmd] : segments(hook.tool_input, cmd)) {
+    const h = targetHost(firstHost, seg);
+    if (!h) continue;
+    const l = (isFetch ? wholeLayer : inferLayer(seg)) || wholeLayer;
+    if (!targets.some(t => t.host === h && t.layer === l)) targets.push({ host: h, layer: l });
+  }
+  const cmdHost = targets.length ? targets[0].host : null;
+  if (!targets.length) {
+    // Browser follow-ups (snapshot, eval, click) carry no URL: they act on the page the session last opened.
+    const isB = /^browser-/.test(wholeLayer || '');
+    const h = (isB && sess._last && sess._last[wholeLayer]) ||
+      (ev !== 'PreToolUse' ? targetHost(firstHost, respText(hook.tool_response)) : null);
+    if (h) targets.push({ host: h, layer: wholeLayer });
+  }
+  const about = host => {
+    const info = siteInfo(sites, host);
+    const tagged = !!(info && Array.isArray(info.tags) && info.tags.includes('cloudflare'));
+    return {
+      cloudflare: tagged || !!(state._cloudflare && state._cloudflare[host]),
+      cfWhy: tagged ? 'is tagged [cloudflare] in the sites registry' : 'served a Cloudflare challenge earlier',
+      known: info && info.route ? ` Known working route for ${info.host}: ${info.route}${info.how ? ' (' + info.how + ')' : ''}.` : '',
+    };
+  };
 
   if (ev === 'PreToolUse') {
     // R2 applies to any host.
     if (/--remote-debugging-port(=|\s)/.test(cmd) && !/--user-data-dir/.test(cmd) && !/agent-browser/.test(cmd)) {
       return deny(ev, 'web-unlock-guard R2: Chrome 136+ silently ignores --remote-debugging-port on the default profile (no port, no DevToolsActivePort). Add --user-data-dir=<a dedicated automation profile folder>. Do not copy cookies from your real profile into it. ' + FORCE_HINT);
     }
-    if (host && cloudflare) {
-      const isAutomationDefault = layer === 'browser-automation' || layer === 'browser-cft';
-      if (/--headless|headless\s*[:=]\s*(true|True)\b/.test(cmd)) {
-        return deny(ev, `web-unlock-guard R3: ${host} ${cfWhy}. Headless browsers do not pass Cloudflare (software WebGL, navigator.webdriver=true). Use a headed real browser, or an unlocker service.${known} ${FORCE_HINT}`);
+    // Every host in the call is checked, not only the first one.
+    for (const { host, layer } of targets) {
+      const { cloudflare, cfWhy, known } = about(host);
+      if (cloudflare) {
+        const isAutomationDefault = layer === 'browser-automation' || layer === 'browser-cft';
+        if (!isFetch && /--headless|headless\s*[:=]\s*(true|True)\b/.test(cmd)) {
+          return deny(ev, `web-unlock-guard R3: ${host} ${cfWhy}. Headless browsers do not pass Cloudflare (software WebGL, navigator.webdriver=true). Use a headed real browser, or an unlocker service.${known} ${FORCE_HINT}`);
+        }
+        if (isAutomationDefault && /\bagent-browser\b|\bplaywright\b|\bpuppeteer\b|\bselenium\b/.test(cmd)) {
+          return deny(ev, `web-unlock-guard R1: ${host} ${cfWhy}. A default automation browser sets navigator.webdriver=true, which loops on the Turnstile challenge. Use ${nextAdvice(layer, NEXT_LAYER, cfg)}.${known} ${FORCE_HINT}`);
+        }
       }
-      if (isAutomationDefault && /\bagent-browser\b|\bplaywright\b|\bpuppeteer\b|\bselenium\b/.test(cmd)) {
-        return deny(ev, `web-unlock-guard R1: ${host} ${cfWhy}. A default automation browser sets navigator.webdriver=true, which loops on the Turnstile challenge. Use ${nextAdvice(layer, NEXT_LAYER, cfg)}.${known} ${FORCE_HINT}`);
-      }
-    }
-    // R4: N blocks on the same host + method = switch method.
-    if (host && layer) {
-      const st = sess[host] && sess[host][layer];
+      // R4: N blocks on the same host + method = switch method.
+      const st = layer && sess[host] && sess[host][layer];
       if (st && st.count >= cfg.maxStrikes) {
         return deny(ev, `web-unlock-guard R4: ${st.count} blocks on ${host} via "${layer}" (${st.reasons.join(', ')}). Rule: ${cfg.maxStrikes} failures on the same method = stop retrying. Switch to ${nextAdvice(layer, NEXT_LAYER, cfg)}, or ask the user.${known} ${FORCE_HINT}`);
       }
@@ -219,7 +244,13 @@ async function main(hook) {
   }
 
   if (ev === 'PostToolUse' || ev === 'PostToolUseFailure') {
+    // With several hosts or methods in one call, the output can't be tied to one of them:
+    // count nothing rather than charge the wrong host.
+    if (targets.length !== 1) return;
+    const { host, layer } = targets[0];
     if (!host || !layer) return;
+    const { known } = about(host);
+    const isBrowser = /^browser-/.test(layer);
     const text = respText(hook.tool_response) + '\n' + respText(hook.error || '');
     const r = detect(text) || {};
     // Only a tool call that succeeded with output resets the count; a failure we can't classify

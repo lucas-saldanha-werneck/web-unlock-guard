@@ -1,0 +1,16 @@
+{
+  "description": "WebFetch is always the http method, even when the URL contains a tool name such as playwright or scrapling; a Cloudflare mark then does not trigger the browser rule R1 for WebFetch",
+  "steps": [
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-wf", "tool_name": "WebFetch",
+        "tool_input": { "url": "https://playwright.dev/docs/intro", "prompt": "summarize" },
+        "tool_response": "<title>Just a moment...</title>" },
+      "expect": "context", "contains": "on playwright.dev via \"http\"" },
+    { "event": { "hook_event_name": "PreToolUse", "session_id": "s-wf", "tool_name": "WebFetch",
+        "tool_input": { "url": "https://playwright.dev/docs/api", "prompt": "summarize" } },
+      "expect": "silent" },
+    { "event": { "hook_event_name": "PostToolUse", "session_id": "s-wf", "tool_name": "WebFetch",
+        "tool_input": { "url": "https://docs.example.org/guides/scrapling-and-opencli", "prompt": "summarize" },
+        "tool_response": "HTTP/1.1 429 Too Many Requests" },
+      "expect": "context", "contains": "via \"http\"" }
+  ]
+}

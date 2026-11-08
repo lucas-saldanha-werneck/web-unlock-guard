@@ -86,11 +86,12 @@ function rulesPath() {
 
 // First run: create your rules file from hooks/rules.default.json (empty lists = same as no file) where the
 // guard reads it. Runs at SessionStart and whenever the file is missing. Never overwrites or changes anything
-// that exists (O_EXCL), and never throws: a folder that cannot be written is simply left alone.
+// that exists (O_EXCL), and never throws: a folder that cannot be written is simply left alone. A relative
+// rules_file is not seeded: it would land in whatever project folder the session is in.
 function seedRules(file) {
   let fd;
   try {
-    if (!file || fs.existsSync(file)) return;
+    if (!file || !path.isAbsolute(file) || fs.existsSync(file)) return;
     const data = fs.readFileSync(path.join(HERE, 'rules.default.json'));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fd = fs.openSync(file, 'wx');

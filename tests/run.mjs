@@ -355,6 +355,10 @@ console.log('\n# first-run seed');
   ok('rules folder that cannot be created (under a file) -> exit 0, silent', r.code === 0 && r.stdout === '', `exit ${r.code} stdout ${r.stdout}`);
   check('and the guard still enforces R2', run(env5, pre('chrome --remote-debugging-port=9333 https://example.org')), 'deny', 'R2');
 
+  const { home: h7, env: env7 } = sandbox({ WEB_UNLOCK_GUARD_RULES: 'rel/rules.json' });
+  const r7 = spawnSync(process.execPath, [GUARD], { input: start, env: env7, cwd: h7, encoding: 'utf8', timeout: 10000 });
+  ok('relative rules_file is not seeded into the current folder', r7.status === 0 && r7.stdout === '' && !fs.existsSync(path.join(h7, 'rel')));
+
   const { home: h6 } = sandbox();
   const ro = path.join(h6, 'ro');
   fs.mkdirSync(ro); fs.chmodSync(ro, 0o555);

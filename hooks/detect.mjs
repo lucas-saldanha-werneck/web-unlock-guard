@@ -8,7 +8,9 @@ const STRONG = [
   [/cf-mitigated:\s*challenge/i, 'cloudflare-challenge', 'cloudflare'],
   [/Performing security verification/i, 'cloudflare-turnstile', 'cloudflare'],
   [/__cf_chl_|cf_chl_opt/i, 'cloudflare-challenge', 'cloudflare'],
-  [/<title>\s*Just a moment\.\.\.\s*<\/title>|(^|\n)\s*Just a moment\.\.\.\s*($|\n)/i, 'cloudflare-js-challenge', 'cloudflare'],
+  [/<title>\s*Just a moment\.\.\.\s*<\/title>|(^|\n)\s*Just a moment\.\.\.\s*($|\n)|(^|\n)Title:\s*Just a moment\.\.\.\s*($|\n)/i, 'cloudflare-js-challenge', 'cloudflare'],
+  // Verification page a site serves behind Cloudflare (Indeed through r.jina.ai, 2026-11-09)
+  [/Additional Verification Required[\s\S]{0,400}Ray ID for this request|Ray ID for this request[\s\S]{0,400}Waiting for [\w.-]+ to respond/i, 'cloudflare-verification-page', 'cloudflare'],
   [/Attention Required!\s*\|\s*Cloudflare|Sorry, you have been blocked/i, 'cloudflare-waf-block', 'cloudflare'],
   [/Enable JavaScript and cookies to continue/i, 'cloudflare-js-challenge', 'cloudflare'],
   // Other anti-bot vendors

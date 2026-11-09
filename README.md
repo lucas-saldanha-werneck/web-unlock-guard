@@ -31,16 +31,16 @@ To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 ## Install
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/web-unlock-guard
-/plugin install web-unlock-guard@web-unlock-guard
+/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin install web-unlock-guard@lucas-plugins
 ```
 
 It needs `node` on `PATH` (tested with Node 26). The hooks run on `Bash`, `WebFetch`, and
 context-mode's `ctx_execute`, `ctx_execute_file` and `ctx_batch_execute` tools.
 
-## Configuration
+## Settings
 
-Everything is optional. Set the options with `/plugin configure web-unlock-guard@web-unlock-guard`,
+Everything is optional. Set the options with `/plugin configure web-unlock-guard@lucas-plugins`,
 or use the environment variables.
 
 | Option | Env var | Default | Meaning |
@@ -54,7 +54,7 @@ or use the environment variables.
 Option values live in your `settings.json` (`pluginConfigs`), and the files they point to live in your own
 folders, so a plugin update changes neither. Keep your registry and rules file outside the plugin folder.
 
-### Your settings
+### Where your rules file lives
 
 Your rules file is `~/.config/web-unlock-guard/rules.json` (or the path in `rules_file` /
 `WEB_UNLOCK_GUARD_RULES`). The plugin creates it by itself the first time it runs (at session start, or on
@@ -231,8 +231,7 @@ once.
 ## Uninstall
 
 ```
-/plugin uninstall web-unlock-guard@web-unlock-guard
-/plugin marketplace remove web-unlock-guard
+/plugin uninstall web-unlock-guard@lucas-plugins
 ```
 
 Uninstalling deletes the plugin data folder, which holds the strike file. If you ran the hook

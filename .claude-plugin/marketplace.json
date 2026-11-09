@@ -9,7 +9,7 @@
     {
       "name": "web-unlock-guard",
       "source": "./",
-      "description": "After 2 blocks on one method Claude must switch; no headless or default automation browsers on Cloudflare sites; no --remote-debugging-port without --user-data-dir."
+      "description": "Stops Claude from retrying a blocked site the same way."
     }
   ]
 }

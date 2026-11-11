@@ -32,7 +32,7 @@ To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 
 ```
 /plugin marketplace add lucas-saldanha-werneck/claude-plugins
-/plugin install web-unlock-guard@lucas-plugins
+/plugin install web-unlock-guard@lucas-tools
 ```
 
 It needs `node` on `PATH` (tested with Node 26). The hooks run on `Bash`, `WebFetch`, and
@@ -40,7 +40,7 @@ context-mode's `ctx_execute`, `ctx_execute_file` and `ctx_batch_execute` tools.
 
 ## Settings
 
-Everything is optional. Set the options with `/plugin configure web-unlock-guard@lucas-plugins`,
+Everything is optional. Set the options with `/plugin configure web-unlock-guard@lucas-tools`,
 or use the environment variables.
 
 | Option | Env var | Default | Meaning |
@@ -231,7 +231,7 @@ once.
 ## Uninstall
 
 ```
-/plugin uninstall web-unlock-guard@lucas-plugins
+/plugin uninstall web-unlock-guard@lucas-tools
 ```
 
 Uninstalling deletes the plugin data folder, which holds the strike file. If you ran the hook

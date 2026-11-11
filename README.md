@@ -31,7 +31,7 @@ To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 ## Install
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin marketplace add lucas-saldanha-werneck/lucas-tools
 /plugin install web-unlock-guard@lucas-tools
 ```
 

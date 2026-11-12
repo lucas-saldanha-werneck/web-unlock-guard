@@ -25,7 +25,6 @@ If Claude then tries `wget` on the same host, the call is denied and Claude gets
 PreToolUse:Bash hook error: web-unlock-guard R4: 2 blocks on blocked.example.com via "http"
 (cloudflare-js-challenge). Rule: 2 failures on the same method = stop retrying. Switch to a
 rendering fetcher (e.g. r.jina.ai or Firecrawl) or a stealth fetcher, or ask the user.
-To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 ```
 
 ## Install
@@ -109,8 +108,7 @@ focus:
   segment, quoted arguments included: an `osascript -e '...'` or `python -c "..."` that contains it is denied,
   as is a script whose only mention of it is a comment. The split is plain text, so a `;` inside quotes
   also splits. `{skill_dir}` in the message becomes
-  the companion skill folder. The message ends with the `WEB_UNLOCK_FORCE=1` hint, and that prefix skips these
-  rules too. A line continued with `\` is joined before the split.
+  the companion skill folder. `WEB_UNLOCK_FORCE=1` does not skip these rules. A line continued with `\` is joined before the split.
 - `webish`: extra tool names that make a command count as web work. Each matches as a whole word (`mcp` does
   not match inside `mcporter`). A plain word only lets such commands reach the built-in checks; with a `layer`
   (`http`, `fetch-render`, `fetch-unlock`, `browser-automation`, `browser-cft`, `browser-stealth`,
@@ -219,8 +217,10 @@ Scrapling MCP call is always `browser-stealth`, whatever tool names appear in th
 the program decides first (`curl https://github.com/microsoft/playwright` is `http`); tool names are then
 looked for outside the URLs, and r.jina.ai, Firecrawl's API and the unlocker services are recognized by host.
 
-To skip every check for one call, start the command with `WEB_UNLOCK_FORCE=1` (after any other
-`VAR=value` prefix). The same text in a comment, a string or the middle of a command does not count. The hooks fail open:
+To skip the built-in checks (R1 to R4, and strike counting) for one call, start the command with
+`WEB_UNLOCK_FORCE=1` (after any other `VAR=value` prefix). Your own deny rules from the rules file still
+apply. The same text in a comment, a string or the middle of a command does not count. This switch is for
+you, not for Claude: no refusal mentions it. The hooks fail open:
 bad input or an internal error lets the tool call through.
 
 ## Tests

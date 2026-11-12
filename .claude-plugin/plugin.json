@@ -1,6 +1,6 @@
 {
   "name": "web-unlock-guard",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Stops Claude from retrying a blocked site the same way.",
   "author": {
     "name": "Lucas Saldanha Werneck",

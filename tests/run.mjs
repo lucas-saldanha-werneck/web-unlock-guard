@@ -163,7 +163,15 @@ console.log('\n# rules file');
   check('"tools" limits a rule to matching tools', run(env, pre('only-in-bash', 'mcp__x__ctx_execute')), 'silent');
   check('"tools" rule still fires on its tool', run(env, pre('only-in-bash')), 'deny', 'bash rule');
   check('a rule with a bad regex is skipped, the others apply', run(env, pre('echo (')), 'silent');
-  check('WEB_UNLOCK_FORCE=1 skips your rules too', run(env, pre('WEB_UNLOCK_FORCE=1 curl http://127.0.0.1:9223/json/new')), 'silent');
+  check('WEB_UNLOCK_FORCE=1 does not skip your rules', run(env, pre('WEB_UNLOCK_FORCE=1 curl http://127.0.0.1:9223/json/new')), 'deny', 'no-json-new');
+  check('WEB_UNLOCK_FORCE=1 does not skip your rules on a non-web command', run(env, pre('WEB_UNLOCK_FORCE=1 osascript -e x; activate application "Chrome Beta"')), 'deny', 'keep it behind');
+  {
+    const r = run(env, pre('curl http://127.0.0.1:9223/json/new'));
+    const t = r.stdout || '';
+    const ok = t.includes('no-json-new') && !/FORCE/.test(t);
+    if (ok) pass++; else fail++;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  your rule's refusal does not mention the FORCE bypass${ok ? '' : '  ' + t.slice(0, 300)}`);
+  }
   // Extra webish word: an mcporter call with a URL-less body gets strikes only when watched
   const post = { hook_event_name: 'PostToolUse', session_id: 's-rules', tool_name: 'Bash',
     tool_input: { command: 'mcporter call fetch.page site.example.com' }, tool_response: { stdout: '<title>Just a moment...</title> https://site.example.com/' } };
@@ -474,6 +482,23 @@ console.log('\n# audit round 2');
     check('FORCE in an echoed string does not skip R2', run(env, bash('PreToolUse', 'echo "WEB_UNLOCK_FORCE=1"; chrome --remote-debugging-port=9333 https://e.example.org')), 'deny', 'R2');
     check('FORCE as a command prefix still skips', run(env, bash('PreToolUse', 'WEB_UNLOCK_FORCE=1 chrome --remote-debugging-port=9333 https://e.example.org')), 'silent');
     check('FORCE after another assignment still skips', run(env, bash('PreToolUse', 'A=1 WEB_UNLOCK_FORCE=1 chrome --remote-debugging-port=9333 https://e.example.org')), 'silent');
+  }
+
+  // WUG-02 (owner decision b): no refusal of R1-R4 hints at the FORCE bypass
+  {
+    const { env } = sandbox();
+    const noHint = (label, res, rule) => {
+      const t = res.stdout || '';
+      const ok = res.code === 0 && t.includes(rule) && !/FORCE/.test(t);
+      if (ok) pass++; else fail++;
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : '  ' + t.slice(0, 300)}`);
+    };
+    noHint('R2 refusal has no FORCE hint', run(env, bash('PreToolUse', 'chrome --remote-debugging-port=9333 https://e.example.org')), 'R2');
+    for (let i = 0; i < 2; i++) run(env, bash('PostToolUse', 'curl -s https://hint.example.com/', { tool_response: { stdout: CF } }, 's-hint'));
+    noHint('R3 refusal has no FORCE hint', run(env, bash('PreToolUse', 'chromium --headless https://hint.example.com/', undefined, 's-hint')), 'R3');
+    noHint('R1 refusal has no FORCE hint', run(env, bash('PreToolUse', 'agent-browser open https://hint.example.com/', undefined, 's-hint')), 'R1');
+    noHint('R4 refusal has no FORCE hint', run(env, bash('PreToolUse', 'wget -q https://hint.example.com/', undefined, 's-hint')), 'R4');
+    check('FORCE prefix still skips R4', run(env, bash('PreToolUse', 'WEB_UNLOCK_FORCE=1 wget -q https://hint.example.com/', undefined, 's-hint')), 'silent');
   }
 
   // WUG-03: tool names inside a URL do not change the method

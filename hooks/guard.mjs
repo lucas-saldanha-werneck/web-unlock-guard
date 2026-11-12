@@ -15,7 +15,8 @@
 //            hosts or methods counts nothing, because its output cannot be tied to one of them.
 //
 // Fails open: any internal error exits 0 with no output. Start a command with WEB_UNLOCK_FORCE=1 (a real
-// env prefix, not text elsewhere in the command) to skip every check for that call.
+// env prefix, not text elsewhere in the command) to skip the built-in checks R1-R4 for that call; your own
+// deny rules still apply. Refusals never mention this prefix: it is for the user, not for the agent.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -359,7 +360,6 @@ function program(seg) {
 
 const out = o => process.stdout.write(JSON.stringify(o));
 const deny = (ev, reason) => out({ hookSpecificOutput: { hookEventName: ev, permissionDecision: 'deny', permissionDecisionReason: reason } });
-const FORCE_HINT = 'To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.';
 
 async function main(hook) {
   const ev = hook.hook_event_name || '';
@@ -370,7 +370,7 @@ async function main(hook) {
   const isScrapling = /ScraplingServer__/i.test(tool);
   const isFetch = /WebFetch|ctx_fetch_and_index$/.test(tool) || isScrapling;
   if (ev === 'SessionStart') return seedRules(rulesPath());
-  if (forced(hook.tool_input, cmd, isFetch)) return;
+  const force = forced(hook.tool_input, cmd, isFetch);
 
   // Your rules file is the only thing read before the web check; without one, non-web calls stop here.
   const rulesFile = rulesPath();
@@ -387,10 +387,12 @@ async function main(hook) {
       const seg = segs.find(sg => !textOnly(sg) && r.pattern.test(sg) && !(r.unless && r.unless.test(sg)));
       if (seg !== undefined) {
         const msg = r.message.includes('{skill_dir}') ? r.message.replaceAll('{skill_dir}', getCfg().skillDir || '<web-unlock skill folder>') : r.message;
-        return deny(ev, `web-unlock-guard (${r.name}): ${msg} ${FORCE_HINT}`);
+        return deny(ev, `web-unlock-guard (${r.name}): ${msg}`);
       }
     }
   }
+  // WEB_UNLOCK_FORCE=1 skips only what follows: the built-in checks and strike counting.
+  if (force) return;
   const WEBISH = rules.webish.length ? new RegExp(`${BASE_WEBISH.source}|${rules.webish.map(w => w.src).join('|')}`, 'i') : BASE_WEBISH;
   // The method of a request: the detector's, else the layer of a matching "webish" word from your rules.
   const layerOf = c => inferLayer(c) || (rules.webish.find(w => w.layer && w.re.test(c)) || {}).layer || null;
@@ -445,7 +447,7 @@ async function main(hook) {
     const whole = isFetch || /<</.test(cmd) || (typeof lang === 'string' && !/^(shell|bash|sh|zsh)$/i.test(lang));
     const r2 = sg => /--remote-debugging-port(=|\s)/.test(sg) && !/--user-data-dir/.test(sg) && !/agent-browser/.test(sg);
     if ((whole ? [cmd] : segments(hook.tool_input, cmd)).some(r2)) {
-      return deny(ev, 'web-unlock-guard R2: Chrome 136+ silently ignores --remote-debugging-port on the default profile (no port, no DevToolsActivePort). Add --user-data-dir=<a dedicated automation profile folder>. Do not copy cookies from your real profile into it. ' + FORCE_HINT);
+      return deny(ev, 'web-unlock-guard R2: Chrome 136+ silently ignores --remote-debugging-port on the default profile (no port, no DevToolsActivePort). Add --user-data-dir=<a dedicated automation profile folder>. Do not copy cookies from your real profile into it.');
     }
     // Every host in the call is checked, not only the first one.
     for (const { host, layer } of targets) {
@@ -453,16 +455,16 @@ async function main(hook) {
       if (cloudflare) {
         const isAutomationDefault = layer === 'browser-automation' || layer === 'browser-cft';
         if (!isFetch && /--headless|headless\s*[:=]\s*(true|True)\b/.test(cmd)) {
-          return deny(ev, `web-unlock-guard R3: ${host} ${cfWhy}. Headless browsers do not pass Cloudflare (software WebGL, navigator.webdriver=true). Use a headed real browser, or an unlocker service.${known} ${FORCE_HINT}`);
+          return deny(ev, `web-unlock-guard R3: ${host} ${cfWhy}. Headless browsers do not pass Cloudflare (software WebGL, navigator.webdriver=true). Use a headed real browser, or an unlocker service.${known}`);
         }
         if (isAutomationDefault && /\bagent-browser\b|\bplaywright\b|\bpuppeteer\b|\bselenium\b/.test(cmd)) {
-          return deny(ev, `web-unlock-guard R1: ${host} ${cfWhy}. A default automation browser sets navigator.webdriver=true, which loops on the Turnstile challenge. Use ${nextAdvice(layer, NEXT_LAYER, cfg)}.${known} ${FORCE_HINT}`);
+          return deny(ev, `web-unlock-guard R1: ${host} ${cfWhy}. A default automation browser sets navigator.webdriver=true, which loops on the Turnstile challenge. Use ${nextAdvice(layer, NEXT_LAYER, cfg)}.${known}`);
         }
       }
       // R4: N blocks on the same host + method = switch method.
       const st = layer && sess[host] && sess[host][layer];
       if (st && st.count >= cfg.maxStrikes) {
-        return deny(ev, `web-unlock-guard R4: ${st.count} blocks on ${host} via "${layer}" (${st.reasons.join(', ')}). Rule: ${cfg.maxStrikes} failures on the same method = stop retrying. Switch to ${nextAdvice(layer, NEXT_LAYER, cfg)}, or ask the user.${known} ${FORCE_HINT}`);
+        return deny(ev, `web-unlock-guard R4: ${st.count} blocks on ${host} via "${layer}" (${st.reasons.join(', ')}). Rule: ${cfg.maxStrikes} failures on the same method = stop retrying. Switch to ${nextAdvice(layer, NEXT_LAYER, cfg)}, or ask the user.${known}`);
       }
     }
     return;

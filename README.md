@@ -35,8 +35,9 @@ To insist anyway, prefix the command with WEB_UNLOCK_FORCE=1.
 /plugin install web-unlock-guard@lucas-tools
 ```
 
-It needs `node` on `PATH` (tested with Node 26). The hooks run on `Bash`, `WebFetch`, and
-context-mode's `ctx_execute`, `ctx_execute_file` and `ctx_batch_execute` tools.
+It needs `node` on `PATH` (tested with Node 26). The hooks run on `Bash`, `WebFetch`,
+context-mode's `ctx_execute`, `ctx_execute_file`, `ctx_batch_execute` and `ctx_fetch_and_index` tools, and
+every tool of the Scrapling MCP server (`ScraplingServer`).
 
 ## Settings
 
@@ -49,7 +50,7 @@ or use the environment variables.
 | `sites_file` | `WEB_UNLOCK_GUARD_SITES` | empty: `~/.config/web-unlock/sites.json` (or `$WEB_UNLOCK_HOME/sites.json`) | Your JSON registry of known hosts (see below). It is laid over the companion skill's bundled `sites.json`, the same way the web-unlock skill reads it: bundled hosts first, then yours; a host in both is your entry, whole. |
 | `skill_dir` | `WEB_UNLOCK_GUARD_SKILL_DIR` | empty: `skills/web-unlock` in `$CLAUDE_CONFIG_DIR` or `~/.claude`, else the installed web-unlock plugin | Your own companion skill folder (see Optional extras). |
 | `rules_file` | `WEB_UNLOCK_GUARD_RULES` | empty: `~/.config/web-unlock-guard/rules.json` (created on first run) | Your own deny rules and extra tool names (see below). |
-| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `state/web-unlock-guard.json` under `$CLAUDE_CONFIG_DIR` (else `~/.claude`) when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it. |
+| | `WEB_UNLOCK_GUARD_STATE` | `$CLAUDE_PLUGIN_DATA/web-unlock-guard.json`, or `state/web-unlock-guard.json` under `$CLAUDE_CONFIG_DIR` (else `~/.claude`) when that variable isn't set | Strike counter file. A session idle for 24 hours is ignored and dropped. Hooks running in parallel take turns through a `.lock` file next to it; a hook that can't take it in 2 seconds skips its update. |
 
 Option values live in your `settings.json` (`pluginConfigs`), and the files they point to live in your own
 folders, so a plugin update changes neither. Keep your registry and rules file outside the plugin folder.
@@ -102,12 +103,14 @@ focus:
 - Segments whose program only reads, searches or prints text are never denied: `grep`, `egrep`, `fgrep`,
   `rg`, `ag`, `ack`, `git`, `gh`, `echo`, `printf`, `cat`, `less`, `more`, `head`, `tail`, `wc`, `sort`,
   `uniq`, `cut`, `tr`, `sed`, `awk`, `jq`, `diff`, `ls`, `find`, `man`. So `grep -rn '/json/new' .` or a commit
-  message that names the pattern passes. In every other program the pattern is matched against the whole
+  message that names the pattern passes. The forms of these programs that run other commands are checked
+  like any other: `find -exec`/`-execdir`/`-ok`, `awk` with `system()` or `getline`, `sed`'s `e` command,
+  `git -c name=value` (aliases, `core.sshCommand`, ...), and `gh api`/`alias`/`extension`/`codespace`. In every other program the pattern is matched against the whole
   segment, quoted arguments included: an `osascript -e '...'` or `python -c "..."` that contains it is denied,
   as is a script whose only mention of it is a comment. The split is plain text, so a `;` inside quotes
   also splits. `{skill_dir}` in the message becomes
   the companion skill folder. The message ends with the `WEB_UNLOCK_FORCE=1` hint, and that prefix skips these
-  rules too.
+  rules too. A line continued with `\` is joined before the split.
 - `webish`: extra tool names that make a command count as web work. Each matches as a whole word (`mcp` does
   not match inside `mcporter`). A plain word only lets such commands reach the built-in checks; with a `layer`
   (`http`, `fetch-render`, `fetch-unlock`, `browser-automation`, `browser-cft`, `browser-stealth`,
@@ -173,15 +176,18 @@ registry.
 
 A `PostToolUse` / `PostToolUseFailure` hook reads each web tool result for block signatures:
 Cloudflare, DataDome, PerimeterX, Kasada, Imperva, Akamai, captcha widgets, LinkedIn's authwall,
-HTTP 401/403/406/429/451/503 (including the `curl: (22)` line that `curl -f` prints), short
+HTTP 403/406/429/451/503 (including the `curl: (22)` line that `curl -f` prints), short
 error pages and near-empty JavaScript shells. Captcha and Turnstile widget markers count only on
 a thin page (under 600 visible characters of HTML, or under 2000 characters of plain text),
 because ordinary pages embed them in forms. Each block counts a strike per session, host and
 method. A tool call that succeeds with a clean result resets the count for that method. A failure
-with no block signature, such as a DNS error or a timeout, leaves the count as it is.
+with no block signature, such as a DNS error or a timeout, leaves the count as it is. A 401 never
+counts, and neither does a 403 that comes with a JSON content type or a JSON body (an API refusing a
+token), unless the output also carries an anti-bot signature.
 
-The host is the first URL in each request. A call can hold several requests: shell commands
-joined by `;`, `&&`, `||`, `|` or new lines, or the entries of a `ctx_batch_execute` call.
+Every URL in each request is a target, read with the URL parser (so `https://a.example@b.example/`
+counts against `b.example`). A call can hold several requests: shell commands joined by `;`, `&&`,
+`||`, `|` or new lines, or the entries of a `ctx_batch_execute` call.
 
 - Through the r.jina.ai reader (`r.jina.ai/https://site.example/`), strikes count against the
   target site, so one blocked site doesn't use up the reader for every other site.
@@ -208,10 +214,13 @@ The methods are `http` (curl, wget, httpx, requests, fetch, WebFetch), `fetch-re
 Firecrawl, and WebFetch through r.jina.ai), `fetch-unlock` (Apify, Bright Data, ScraperAPI, ZenRows, Scrapfly),
 `browser-automation`, `browser-stealth` (Patchright, Camoufox, nodriver, Scrapling),
 `browser-real` (your own Chrome via `agent-browser --auto-connect`, `claude --chrome`, OpenCLI)
-and `browser-cloud`. A WebFetch call is always `http` or `fetch-render`, whatever tool names
-appear in its URL.
+and `browser-cloud`. A WebFetch or `ctx_fetch_and_index` call is always `http` or `fetch-render`, and a
+Scrapling MCP call is always `browser-stealth`, whatever tool names appear in the URL. For shell commands
+the program decides first (`curl https://github.com/microsoft/playwright` is `http`); tool names are then
+looked for outside the URLs, and r.jina.ai, Firecrawl's API and the unlocker services are recognized by host.
 
-To skip every check for one call, put `WEB_UNLOCK_FORCE=1` in the command. The hooks fail open:
+To skip every check for one call, start the command with `WEB_UNLOCK_FORCE=1` (after any other
+`VAR=value` prefix). The same text in a comment, a string or the middle of a command does not count. The hooks fail open:
 bad input or an internal error lets the tool call through.
 
 ## Tests

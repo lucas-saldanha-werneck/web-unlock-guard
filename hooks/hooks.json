@@ -10,7 +10,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?",
+        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?|mcp__.*ctx_fetch_and_index|mcp__.*ScraplingServer__.*",
         "hooks": [
           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 5 }
         ]
@@ -18,7 +18,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?",
+        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?|mcp__.*ctx_fetch_and_index|mcp__.*ScraplingServer__.*",
         "hooks": [
           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 5 }
         ]
@@ -26,7 +26,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?",
+        "matcher": "Bash|WebFetch|mcp__.*ctx_(batch_)?execute(_file)?|mcp__.*ctx_fetch_and_index|mcp__.*ScraplingServer__.*",
         "hooks": [
           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs"], "timeout": 5 }
         ]

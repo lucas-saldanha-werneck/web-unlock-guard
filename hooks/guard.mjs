@@ -14,8 +14,8 @@
 //            and remember hosts that served a Cloudflare challenge. A call that reaches several
 //            hosts or methods counts nothing, because its output cannot be tied to one of them.
 //
-// Fails open: any internal error exits 0 with no output. Put WEB_UNLOCK_FORCE=1 in the command
-// to skip every check for that call.
+// Fails open: any internal error exits 0 with no output. Start a command with WEB_UNLOCK_FORCE=1 (a real
+// env prefix, not text elsewhere in the command) to skip every check for that call.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +24,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = os.homedir();
 const BASE_WEBISH = /agent-browser|opencli|yt-dlp|curl\s|wget\s|firecrawl|apify|jina\.ai|remote-debugging|connectOverCDP|playwright|puppeteer|selenium|patchright|camoufox|nodriver|scrapling|--headless|https?:\/\//i;
-const FORCE = /WEB_(UNLOCK|ACCESS)_FORCE=1/;
+const FORCE_WORD = /^WEB_(UNLOCK|ACCESS)_FORCE=1$/;
 const DAY = 24 * 3600 * 1000;
 
 // Plugin options arrive as CLAUDE_PLUGIN_OPTION_<KEY>; plain env vars work for manual installs.
@@ -204,13 +204,14 @@ function cmdText(ti) {
   if (typeof ti.command === 'string') return ti.command;
   if (typeof ti.code === 'string') return ti.code;
   if (typeof ti.url === 'string') return ti.url;
+  if (Array.isArray(ti.requests)) return ti.requests.map(r => r && r.url).filter(u => typeof u === 'string').join('\n');
   if (Array.isArray(ti.commands)) return ti.commands.map(c => c && c.command).filter(Boolean).join('\n');
   return '';
 }
 // Split a call into its requests: batch entries, then lines, `;`, `&&`, `||` and `|`.
 function segments(ti, cmd) {
   const parts = ti && Array.isArray(ti.commands) ? ti.commands.map(c => c && c.command).filter(c => typeof c === 'string') : [cmd];
-  return parts.flatMap(p => p.split(/\n|;|&&|\|\|?/)).map(x => x.trim()).filter(Boolean);
+  return parts.flatMap(p => p.replace(/\\\r?\n/g, ' ').split(/\n|;|&&|\|\|?/)).map(x => x.trim()).filter(Boolean);
 }
 function respText(tr) {
   if (tr == null) return '';
@@ -247,7 +248,8 @@ const loadState = file => prune(loadJSON(file));
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 // Read-modify-write under a lock file, so parallel hooks don't overwrite each other's strikes.
 // A lock older than 10 seconds is left over from a killed hook (hooks time out at 5) and is removed.
-// If the lock can't be taken in 2 seconds, the update goes ahead without it (fail open).
+// If the lock can't be taken in 2 seconds, the update is skipped (fail open): writing without the lock
+// could overwrite another hook's strike.
 // The file is written to a temporary name and renamed, so a reader never sees half a file.
 function updateState(file, fn) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -267,6 +269,7 @@ function updateState(file, fn) {
       if (!removed) sleep(10 + Math.random() * 20);
     }
   }
+  if (fd === null) return;
   try {
     const s = loadState(file);
     if (!fn(s)) return;
@@ -320,6 +323,32 @@ function siteInfo(sites, host) {
 // Programs that only read, search or print text: a deny rule never fires on their segments.
 const TEXT_ONLY = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'git', 'echo', 'printf', 'cat', 'less', 'more',
   'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'sed', 'awk', 'jq', 'diff', 'ls', 'find', 'gh', 'man']);
+// Forms of those programs that run other commands: find -exec, awk system()/getline, sed's e command,
+// git -c (aliases with !, core.sshCommand, ...) and gh api/alias/extension. These segments are checked.
+const RUNS_OTHERS = {
+  find: /\s-(exec|execdir|ok|okdir)\b/,
+  awk: /\bsystem\s*\(|\bgetline\b/,
+  sed: /\/[gimpIM0-9]*e[gimpIM0-9]*\s*['";}]|(^|['";{]\s*)e(\s|['";}]|$)|\s--?(e|expression)\b[^|]*\be\s/,
+  git: /\s-c\s+\S+=|--(upload|receive)-pack|\bext::|\balias\.|core\.(sshCommand|pager|editor|fsmonitor|hooksPath)/,
+  gh: /^\S*gh\s+(api|alias|extension|ext|codespace)\b/,
+};
+function textOnly(seg) {
+  const p = program(seg);
+  if (!TEXT_ONLY.has(p)) return false;
+  const re = RUNS_OTHERS[p];
+  return !(re && re.test(String(seg).trim()));
+}
+// WEB_UNLOCK_FORCE=1 among the env assignments that start a command segment (not in a comment or a string).
+function forced(ti, cmd, oneUnit) {
+  for (const seg of oneUnit ? [] : segments(ti, cmd)) {
+    for (const w of seg.replace(/^[({\s]+/, '').split(/\s+/)) {
+      if (FORCE_WORD.test(w)) return true;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !/^(env|export)$/.test(w)) break;
+    }
+  }
+  return false;
+}
+
 // The program a segment runs: the first word after VAR=value, env, sudo, command, exec, nohup, time.
 function program(seg) {
   const words = String(seg).trim().replace(/^[({\s]+/, '').split(/\s+/);
@@ -336,9 +365,12 @@ async function main(hook) {
   const ev = hook.hook_event_name || '';
   const tool = hook.tool_name || '';
   const cmd = cmdText(hook.tool_input);
-  const isFetch = /WebFetch/.test(tool);
+  // URL tools: the input is one or more URLs, not a command. Their method comes from the tool:
+  // WebFetch and context-mode's ctx_fetch_and_index are plain fetches, the Scrapling MCP is a stealth fetcher.
+  const isScrapling = /ScraplingServer__/i.test(tool);
+  const isFetch = /WebFetch|ctx_fetch_and_index$/.test(tool) || isScrapling;
   if (ev === 'SessionStart') return seedRules(rulesPath());
-  if (FORCE.test(cmd)) return;
+  if (forced(hook.tool_input, cmd, isFetch)) return;
 
   // Your rules file is the only thing read before the web check; without one, non-web calls stop here.
   const rulesFile = rulesPath();
@@ -352,7 +384,7 @@ async function main(hook) {
     const segs = isFetch ? [cmd] : segments(hook.tool_input, cmd);
     for (const r of rules.deny) {
       if (r.tools && !r.tools.test(tool)) continue;
-      const seg = segs.find(sg => !TEXT_ONLY.has(program(sg)) && r.pattern.test(sg) && !(r.unless && r.unless.test(sg)));
+      const seg = segs.find(sg => !textOnly(sg) && r.pattern.test(sg) && !(r.unless && r.unless.test(sg)));
       if (seg !== undefined) {
         const msg = r.message.includes('{skill_dir}') ? r.message.replaceAll('{skill_dir}', getCfg().skillDir || '<web-unlock skill folder>') : r.message;
         return deny(ev, `web-unlock-guard (${r.name}): ${msg} ${FORCE_HINT}`);
@@ -366,26 +398,34 @@ async function main(hook) {
   getCfg();
   const { detect, inferLayer, NEXT_LAYER, firstHost } = await loadDetector(cfg);
   const sites = loadSites(cfg);
-  // WebFetch is the http method whatever words its URL contains; through r.jina.ai it is fetch-render.
-  const fetchLayer = s => (/r\.jina\.ai/i.test(s) ? 'fetch-render' : 'http');
+  // A fetch tool is the http method whatever words its URL contains; through r.jina.ai it is fetch-render.
+  const fetchLayer = s => (isScrapling ? 'browser-stealth' : /r\.jina\.ai/i.test(s) ? 'fetch-render' : 'http');
   const wholeLayer = isFetch ? fetchLayer(cmd) : layerOf(cmd);
   const state = loadState(cfg.stateFile);
   const sid = hook.session_id || 'nosession';
   const sess = state[sid] || {};
-  // One target (host + method) per request in the call: each shell segment, line or batch entry.
+  // Every web host in a text: each "http(s)://" starts a candidate, read through the reader-proxy rule.
+  const hostsIn = s => {
+    const str = String(s || ''), hs = [], re = /https?:\/\//gi;
+    let m;
+    while ((m = re.exec(str))) { const h = targetHost(firstHost, str.slice(m.index)); if (h && !hs.includes(h)) hs.push(h); }
+    return hs;
+  };
+  // One target (host + method) per URL in each request of the call: each shell segment, line or batch entry.
   const targets = [];
-  for (const seg of isFetch ? [cmd] : segments(hook.tool_input, cmd)) {
-    const h = targetHost(firstHost, seg);
-    if (!h) continue;
+  for (const seg of isFetch ? cmd.split('\n') : segments(hook.tool_input, cmd)) {
     const l = (isFetch ? wholeLayer : layerOf(seg)) || wholeLayer;
-    if (!targets.some(t => t.host === h && t.layer === l)) targets.push({ host: h, layer: l });
+    for (const h of hostsIn(seg)) if (!targets.some(t => t.host === h && t.layer === l)) targets.push({ host: h, layer: l });
   }
   const cmdHost = targets.length ? targets[0].host : null;
   if (!targets.length) {
     // Browser follow-ups (snapshot, eval, click) carry no URL: they act on the page the session last opened.
+    // Otherwise a host from the output counts only if the command names it (a bare domain, as in
+    // "mcporter call fetch site.example.com"); a link to another site in the output is never charged.
     const isB = /^browser-/.test(wholeLayer || '');
+    const named = h => new RegExp(`(^|[^a-z0-9.-])(www\\.)?${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9-])`, 'i').test(cmd);
     const h = (isB && sess._last && sess._last[wholeLayer]) ||
-      (ev !== 'PreToolUse' ? targetHost(firstHost, respText(hook.tool_response)) : null);
+      (ev !== 'PreToolUse' ? hostsIn(respText(hook.tool_response)).find(named) : null);
     if (h) targets.push({ host: h, layer: wholeLayer });
   }
   const about = host => {
@@ -399,8 +439,12 @@ async function main(hook) {
   };
 
   if (ev === 'PreToolUse') {
-    // R2 applies to any host.
-    if (/--remote-debugging-port(=|\s)/.test(cmd) && !/--user-data-dir/.test(cmd) && !/agent-browser/.test(cmd)) {
+    // R2 applies to any host, and is checked on the segment that starts Chrome: words in another command
+    // do not excuse it. Code in another language, or a heredoc, is checked as one piece.
+    const lang = hook.tool_input && hook.tool_input.language;
+    const whole = isFetch || /<</.test(cmd) || (typeof lang === 'string' && !/^(shell|bash|sh|zsh)$/i.test(lang));
+    const r2 = sg => /--remote-debugging-port(=|\s)/.test(sg) && !/--user-data-dir/.test(sg) && !/agent-browser/.test(sg);
+    if ((whole ? [cmd] : segments(hook.tool_input, cmd)).some(r2)) {
       return deny(ev, 'web-unlock-guard R2: Chrome 136+ silently ignores --remote-debugging-port on the default profile (no port, no DevToolsActivePort). Add --user-data-dir=<a dedicated automation profile folder>. Do not copy cookies from your real profile into it. ' + FORCE_HINT);
     }
     // Every host in the call is checked, not only the first one.

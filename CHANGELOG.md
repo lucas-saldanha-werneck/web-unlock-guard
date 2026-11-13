@@ -9,16 +9,18 @@ All notable changes to this project are documented here. Versions follow [Semant
 - The `FORCE` prefix gives no hint in refusals and never skips your own deny rules.
 
 ## [0.4.5] - 2026-11-12
-- Audit fixes: MCP fetch tools, `FORCE` prefix, host and method parsing, the strike lock, API auth answers.
+- Also watches the context-mode fetch tool and the Scrapling MCP.
+- Hosts read with the URL parser, every URL in a command segment checked; more ways to run commands (`find -exec`, `awk system()`, `git -c`, `gh api`) checked by deny rules.
+- `WEB_UNLOCK_FORCE=1` counts only as a command's env prefix; a 401, or a 403 with a JSON API answer, is not a strike.
 
 ## [0.4.4] - 2026-11-11
-- Maintenance (catalog renamed to `lucas-tools`).
+- Points to the catalog repo's new name, `lucas-tools`.
 
 ## [0.4.3] - 2026-11-11
-- Maintenance (catalog renamed to `lucas-tools`).
+- Catalog renamed to `lucas-tools`.
 
 ## [0.4.2] - 2026-11-09
-- Maintenance (shorter description, catalog install instructions).
+- Docs: one-line description, catalog install, heading names.
 
 ## [0.4.1] - 2026-11-09
 - The detector recognises the Cloudflare verification page when it comes back through r.jina.ai.
@@ -30,6 +32,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 
 ## [0.3.1] - 2026-11-08
 - Windows: retry file reads and renames that collide.
+- CI runs the tests on Linux, macOS and Windows; README rewritten.
 
 ## [0.3.0] - 2026-11-08
 - Fixes for block attribution and false positives found in review.

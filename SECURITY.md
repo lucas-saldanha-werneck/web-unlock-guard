@@ -8,10 +8,12 @@ security problem.
 
 ## Supported versions
 
-Only the latest release (0.4.7) is supported. Fixes go into a new release.
+Only the latest release is supported. Fixes go into a new release.
 
 ## What web-unlock-guard accesses
 
-- Reads the tool call and result that Claude Code hands to its hooks (the Bash command, the URL or fetch input, the page text that came back), only to spot blocked pages and count strikes per host and method.
-- Keeps those strike counts in the plugin data folder (or `~/.claude/state`), and reads or creates your rules file at `~/.config/web-unlock-guard/rules.json`. It also reads the `sites.json` of the web-unlock plugin, if you have it.
-- Makes no network requests, starts no other programs and reads no secrets. The hooks use only Node's `fs`, `os`, `path` and `url` modules.
+- Reads the tool call and result that Claude Code hands to its hooks (the Bash command, the URL or fetch input, the page text that came back) to deny known-bad retries and count blocks per host and method.
+- Writes its state file (session ids, hosts, block counts, and hosts that served a Cloudflare challenge, kept up to 30 days) to the plugin data folder, else `~/.claude/state/web-unlock-guard.json`. Creates your rules file `~/.config/web-unlock-guard/rules.json` on first run if it is missing.
+- Reads `~/.claude/plugins/installed_plugins.json` to find the web-unlock skill, and that skill's `sites.json` plus `~/.config/web-unlock/sites.json`.
+- If the web-unlock skill folder (`skill_dir`, `~/.claude/skills/web-unlock`, or the installed web-unlock plugin) has `lib/detect.mjs`, the hook loads and runs that file inside its own process instead of its bundled detector. Point `skill_dir` only at code you trust.
+- Makes no network requests, starts no other programs and reads no secrets. Its own code uses only Node's `fs`, `os`, `path` and `url` modules.

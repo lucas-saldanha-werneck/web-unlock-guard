@@ -27,6 +27,12 @@ PreToolUse:Bash hook error: web-unlock-guard R4: 2 blocks on blocked.example.com
 rendering fetcher (e.g. r.jina.ai or Firecrawl) or a stealth fetcher, or ask the user.
 ```
 
+## Examples
+
+- Claude runs `curl` on a site behind a Cloudflare challenge twice. The second result gets the `web-unlock-guard: BLOCKED ... strike 2/2` note (see above).
+- Claude then tries `wget` on the same host with the same method: the call is denied and Claude is told to switch to a rendering or stealth fetcher, or ask you.
+- Claude tries another method on that host (for example `r.jina.ai` or a real browser): it is not denied, because strikes count per host and method.
+
 ## Install
 
 ```

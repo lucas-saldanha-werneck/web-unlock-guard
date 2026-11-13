@@ -1,8 +1,22 @@
 # web-unlock-guard
 
+[![CI](https://github.com/lucas-saldanha-werneck/web-unlock-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/web-unlock-guard/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/lucas-saldanha-werneck/web-unlock-guard)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.4.7-blue)](CHANGELOG.md)
+
 A Claude Code plugin that stops Claude from retrying a blocked website the same way. After 2
 blocked results on one host with one method, the next try with that method is denied and Claude
 is told what to try instead.
+
+[![web-unlock-guard demo: tap to open the video](https://github.com/user-attachments/assets/d300f547-ac4f-4544-8058-d4fc2c81b501)](https://lucas-saldanha-werneck.github.io/web-unlock-guard/demo.mp4)
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/user-attachments/assets/360c2e89-eae2-4bea-9510-2f1806f9382a" alt="The hook reporting a blocked fetch in the terminal" width="320"><br>The hook counts each blocked fetch</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/21fb74af-8656-431c-9f75-84e560a0912e" alt="The hook denying the same method a second time" width="320"><br>The same method is denied</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/7a0e009c-fab7-4436-a6ba-4d5deef494bd" alt="The page read through another fetcher" width="320"><br>The page is read another way</td>
+</tr>
+</table>
 
 When a site answers with a Cloudflare challenge, a 403 or a captcha, Claude tends to retry the
 same request with small changes: another user agent, another flag, the same headless browser
@@ -263,6 +277,10 @@ outside the plugin system, delete `~/.claude/state/web-unlock-guard.json` yourse
   page that quotes a block signature can count as one.
 - A batch or compound command with several hosts never adds strikes. Repeating a blocked request
   inside such a call is caught only when that host already has strikes from single-host calls.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 

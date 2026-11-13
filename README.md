@@ -3,6 +3,7 @@
 [![CI](https://github.com/lucas-saldanha-werneck/web-unlock-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/web-unlock-guard/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/web-unlock-guard)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.4.7-blue)](CHANGELOG.md)
+[![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-98.8%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 A Claude Code plugin that stops Claude from retrying a blocked website the same way. After 2
 blocked results on one host with one method, the next try with that method is denied and Claude
